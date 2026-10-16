@@ -1,0 +1,32 @@
+{
+  "baseline_repository": "https://github.com/zenkernelsam/NootedRed.git",
+  "baseline_ref": "605168d",
+  "baseline_commit": "605168ddde5c9c0d6f4fa6e6d41103b66ae09787",
+  "feature_repository": "https://github.com/steve12311/NootedRed.git",
+  "feature_tag": "v0.9.0-pre-release.4",
+  "feature_commit": "1983f326ebedda9e5596ee6e8ba47af52420ec11",
+  "Lilu": "0515f40b7f2a096adc85e832a4c6104fbd07f936",
+  "MacKernelSDK": "7af1933c27aefcbdf4809ee44478829aad30f9c1",
+  "merge_resolution": "Retain feature Xcode project and exact pinned submodules alongside baseline AppleForge. No runtime source conflicts.",
+  "local_adapter": {
+    "path": "tools/build_xcode14_compat.py",
+    "category": "build-toolchain compatibility",
+    "reason": "Apple clang14 lacks #embed and c++23 spelling; disposable tree expands bytes, suffixes and verifies all 57 arrays; original runtime sources remain unmodified.",
+    "retirement": "Retire once native #embed-capable compiler and upstream build workflow are available.",
+    "semantic_regression": "57 arrays: compiled size/suffix/full byte readback; Release build and dependency check; CPU bridge tests with ASan/UBSan."
+  },
+  "transformed_source_inputs": [
+    {
+      "path": "NootedRed/DriverInjector.cpp",
+      "original_sha256": "a8aab1f70ed8dfb6f18f9b96220e8b4d06bea3ea19e0fb51eb8f6a0ab8a3149b",
+      "lowered_sha256": "fbb3b358fed11a863879e19212d8681d14c6de43bce5e3a6f0cfbacf23b7a0ac"
+    },
+    {
+      "path": "NootedRed/HWLibs.cpp",
+      "original_sha256": "6cabcd55746c3b2b5b40a63b9464bef6877cf66efe53e8984bcc02d42cb3fc95",
+      "lowered_sha256": "7563b548c36faeac04ee8e8992af823ca4be51a0643fd120ac99fc0e91742541"
+    }
+  ],
+  "retained_xcode_project_sha256": "39ee174e58e545cb7e76b957e22ed3af25a126267442d29468fab202b25bf43b",
+  "compatibility": "VCN and ComputeScratch require Darwin25/macOS26. Preserve rejection on Sequoia/Darwin24; this is a baseline compatibility test on current machine, not proof of new hardware decode."
+}

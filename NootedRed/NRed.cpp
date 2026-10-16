@@ -45,6 +45,9 @@
 #include <Regs/GC.hpp>
 #include <Regs/NBIO.hpp>
 #include <Regs/SMU.hpp>
+#include <UserSurfaceSync.hpp>
+#include <UserVideoDecode.hpp>
+#include <VCN.hpp>
 #include <X5000.hpp>
 #include <X6000FB.hpp>
 #include <kern/clock.h>
@@ -65,6 +68,7 @@ void NRed::init()
     SYSLOG("NRed", "|-----------------------------------------------------------------|");
 
     Backlight::singleton().init();
+    VCN::init();
 
     lilu.onKextLoadForce(&kextRadeonX6000Framebuffer);
     lilu.onKextLoadForce(&kextRadeonX5000HWLibs);
@@ -76,6 +80,8 @@ void NRed::init()
         [](void* const, KernelPatcher& patcher)
         {
             singleton().processPatcher();
+            UserSurfaceSync::init(patcher);
+            UserVideoDecode::init(patcher);
             DriverInjector::singleton().processPatcher(patcher);
             PenguinWizardry::RuntimeMCManager::singleton().processPatcher(patcher);
         },
@@ -91,6 +97,7 @@ void NRed::init()
             X6000FB::singleton().processKext(patcher, id, slide, size);
             AppleGFXHDA::singleton().processKext(patcher, id, slide, size);
             X5000HWLibs::singleton().processKext(patcher, id, slide, size);
+            VCN::processKext(patcher, id, slide, size);
             X5000::singleton().processKext(patcher, id, slide, size);
         },
         nullptr);
