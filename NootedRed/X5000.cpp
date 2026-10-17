@@ -301,13 +301,14 @@ void X5000::processKext(KernelPatcher& patcher, const size_t id, const mach_vm_a
         if (NRed::singleton().getAttributes().isRenoir()) {
             UInt32 findBpp64 = Dcn1Bpp64SwModeMask, replBpp64 = Dcn2Bpp64SwModeMask;
             UInt32 findNonBpp64 = Dcn1NonBpp64SwModeMask, replNonBpp64 = Dcn2NonBpp64SwModeMask;
+            // Darwin 24 has four Dcn1 mask sites. Patching only the first two
+            // leaves the tiled surface-info path on Dcn1 masks. Lilu treats the
+            // count as a maximum, so four also covers releases with two sites.
             const PenguinWizardry::MaskedLookupPatch patches[] = {
                 {&kextRadeonX5000, reinterpret_cast<const UInt8*>(&findBpp64),
-                 reinterpret_cast<const UInt8*>(&replBpp64), sizeof(UInt32),
-                 currentKernelVersion() >= MACOS_13_4 ? 2U : 4},
+                 reinterpret_cast<const UInt8*>(&replBpp64), sizeof(UInt32), 4U},
                 {&kextRadeonX5000, reinterpret_cast<const UInt8*>(&findNonBpp64),
-                 reinterpret_cast<const UInt8*>(&replNonBpp64), sizeof(UInt32),
-                 currentKernelVersion() >= MACOS_13_4 ? 2U : 4},
+                 reinterpret_cast<const UInt8*>(&replNonBpp64), sizeof(UInt32), 4U},
             };
             PANIC_COND(!PenguinWizardry::MaskedLookupPatch::applyAll(patcher, patches, slide, size), "X5000",
                        "Failed to patch swizzle mode");
