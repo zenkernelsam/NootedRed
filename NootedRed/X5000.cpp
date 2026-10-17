@@ -201,7 +201,6 @@ void X5000::processKext(KernelPatcher& patcher, const size_t id, const mach_vm_a
         {"__ZN30AMDRadeonX5000_AMDGFX9Hardware20initializeFamilyTypeEv", initializeFamilyType},
         {"__ZN30AMDRadeonX5000_AMDGFX9Hardware20allocateAMDHWDisplayEv", allocateAMDHWDisplay},
         {"__ZN26AMDRadeonX5000_AMDHWMemory17adjustVRAMAddressEy", wrapAdjustVRAMAddress, this->orgAdjustVRAMAddress},
-        {"__ZN31AMDRadeonX5000_AMDAccelResource6pageonEP12IOAccelEventby", wrapPageon, this->orgPageon},
         {"__ZN30AMDRadeonX5000_AMDGFX9Hardware20writeASICHangLogInfoEPPv", returnZero},
         {"__ZN4Addr2V27Gfx9Lib20HwlConvertChipFamilyEjj", wrapHwlConvertChipFamily, this->orgHwlConvertChipFamily,
          kHwlConvertChipFamilyPattern},
@@ -391,67 +390,6 @@ UInt64 X5000::wrapAdjustVRAMAddress(void* const self, const UInt64 addr)
     auto ret = FunctionCast(wrapAdjustVRAMAddress, singleton().orgAdjustVRAMAddress)(self, addr);
     if (ret != addr) { return ret + NRed::singleton().getFbOffset(); }
     return ret;
-}
-
-void* X5000::wrapPageon(void* const self, void* const event, const bool pageIn, const UInt64 arg)
-{
-    // Diagnostic only: never modify the resource. Record distinct large-surface
-    // signatures so the QQ image can be separated from login/WindowServer ones.
-    auto* const base = static_cast<UInt8*>(self);
-    const UInt8 type = base[20];
-    if (type == 64 || type == 130 || type == 192) {
-        struct Combo {
-            UInt8  type;
-            UInt8  f532;
-            UInt8  f440;
-            UInt32 f436;
-            UInt64 size;
-        };
-        const UInt64 size = *reinterpret_cast<const UInt64*>(base + 268);
-        const UInt8 f532 = base[532];
-        const UInt8 f440 = base[440];
-        const UInt32 f436 = *reinterpret_cast<const UInt32*>(base + 436);
-        static Combo seen[32] = {};
-        static Combo last = {};
-        static UInt32 seenCount = 0;
-        bool isNew = true;
-        for (UInt32 i = 0; i < seenCount; ++i) {
-            if (seen[i].type == type && seen[i].f532 == f532 && seen[i].f440 == f440 &&
-                seen[i].f436 == f436 && seen[i].size == size) {
-                isNew = false;
-                break;
-            }
-        }
-        if (isNew && seenCount < 32) {
-            Combo c;
-            c.type = type;
-            c.f532 = f532;
-            c.f440 = f440;
-            c.f436 = f436;
-            c.size = size;
-            seen[seenCount] = c;
-            ++seenCount;
-            SYSLOG("X5000", "pageon diag type=%u bytes=%llu f532=%u f440=0x%02X f436=0x%08X",
-                   type, size, f532, f440, f436);
-        }
-        const bool changed = last.type != type || last.f532 != f532 || last.f440 != f440 ||
-                             last.f436 != f436 || last.size != size;
-        if (changed) {
-            last.type = type;
-            last.f532 = f532;
-            last.f440 = f440;
-            last.f436 = f436;
-            last.size = size;
-            NRed::singleton().setProp32("NRedPageonSeenType", type);
-            NRed::singleton().setProp32("NRedPageonSeenBytes", static_cast<UInt32>(size));
-            NRed::singleton().setProp32("NRedPageonSeen532", f532);
-            NRed::singleton().setProp32("NRedPageonSeen440", f440);
-            NRed::singleton().setProp32("NRedPageonSeen436", f436);
-            NRed::singleton().setProp32("NRedPageonSeenArg", static_cast<UInt32>(arg));
-            NRed::singleton().setProp32("NRedPageonCombos", seenCount);
-        }
-    }
-    return FunctionCast(wrapPageon, singleton().orgPageon)(self, event, pageIn, arg);
 }
 
 UInt32 X5000::returnZero() { return 0; }

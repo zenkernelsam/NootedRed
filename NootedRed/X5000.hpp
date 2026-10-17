@@ -54,7 +54,6 @@ class X5000
     mach_vm_address_t              orgGFX9SetupAndInitializeHWCapabilities{0};
     mach_vm_address_t              orgGetHWChannel{0};
     mach_vm_address_t              orgAdjustVRAMAddress{0};
-    mach_vm_address_t              orgPageon{0};
     mach_vm_address_t              orgObtainAccelChannelGroup{0};
     mach_vm_address_t              orgHwlConvertChipFamily{0};
     mach_vm_address_t              orgPM4SubmitCommandBuffer{0};
@@ -74,7 +73,6 @@ private:
     static void   initializeFamilyType(void* self);
     static void*  allocateAMDHWDisplay(void* self);
     static UInt64 wrapAdjustVRAMAddress(void* self, UInt64 addr);
-    static void*  wrapPageon(void* self, void* event, bool pageIn, UInt64 arg);
     static UInt32 returnZero();
     static void*  wrapObtainAccelChannelGroup(void* self, UInt32 priority);
     static void*  wrapObtainAccelChannelGroup1304(void* self, UInt32 priority, void* task);
