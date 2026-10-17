@@ -108,5 +108,7 @@ int main(int argc,const char*[]){
 if __name__ == "__main__":
     data = json.loads((WORK / "patch-data.json").read_text())
     for entry in data['device_records']:
-        print(f"VERIFY PCI {entry['device_id']:#06x}", flush=True)
+        print(f"VERIFY PCI {entry['device_id']:#06x} immediate", flush=True)
         verify(entry, "records", False)
+        print(f"VERIFY PCI {entry['device_id']:#06x} srd_shared", flush=True)
+        verify(entry, "srd_shared_records", True)

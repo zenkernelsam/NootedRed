@@ -95,6 +95,20 @@ def main():
     header = replace_array(header, 'Original0', original0)
     header = replace_array(header, 'Patched0', immediate)
     header = replace_array(header, 'ImmediateInit15E7', immediate)
+    shared = bytearray(array_bytes(header, 'SharedInit15E7'))
+    assert len(shared) == 215
+    probe = shared.find(bytes.fromhex('c4e2791805'))
+    assert probe >= 0
+    field = probe + 5
+    set_u32(shared, field, CONST3 - (INIT + field + 4))
+    jump = shared.find(b'\xe9')
+    assert jump >= 0
+    set_u32(shared, jump + 1, DUMP - (INIT + jump + 5))
+    call = shared.find(b'\xe8', 166)
+    assert call >= 0
+    set_u32(shared, call + 1, OVERRIDE - (INIT + call + 5))
+    header = replace_array(header, 'SharedInit15E7', shared)
+    header = replace_array(header, 'SrdSharedPatched0', shared)
     header = replace_array(header, 'Original1', original1)
     header = replace_array(header, 'Patched1', patched1)
     header = replace_array(header, 'SrdSharedPatched1', patched1)
