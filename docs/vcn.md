@@ -56,7 +56,7 @@ GFX engine/channel setup。
 当前 USB 实验参数保持 `-NRedVCN -NRedDarwin24`，但 kext 只验证 ABI。期望属性：
 `NRedVCNDarwin24DiagnosticOnly=1`、`NRedVCNEngineAllocated=0`、
 `NRedVCNUserDiagnosticOnly=1`、两侧 `ABIValidated=1`、两侧 `Prepared=0`、
-`NativeLoadReady=0`。VCN0 不创建/不启动，用户态解码补丁不安装。这不等于硬解、
+`NativeLoadReady` 缺失或为 0。VCN0 不创建/不启动，用户态解码补丁不安装。这不等于硬解、
 Metal 或 WindowServer 稳定性证明。
 
 ## 实现
@@ -140,7 +140,7 @@ Apple TV 在线观看的密钥请求及系统网络／音频 panic 需要独立�
 `NRedVCNKernelABIRejected=1` 表示桥接依赖的虚表或 getter 不符；
 `NRedVCNX5000ABIValidated` / `X6000ABIValidated` 表示对应驱动核验通过，不能代替真实硬解结果。
 Darwin 24 只读路径还应看到 `NRedVCNDarwin24DiagnosticOnly=1`、
-`NRedVCNEngineAllocated=0`、两侧 `Prepared=0`、`NativeLoadReady=0` 和
+`NRedVCNEngineAllocated=0`、两侧 `Prepared=0`、`NativeLoadReady` 缺失或为 0 和
 `NRedVCNUserDiagnosticOnly=1`；这些表示桥接已核验但未激活，不是失败。
 `NRedVCNEngineSkippedDiagnostic` 只在代码尝试分配引擎时出现，正常只读启动不会设置。
 
