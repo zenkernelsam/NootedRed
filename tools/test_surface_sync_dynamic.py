@@ -41,7 +41,7 @@ static std::map<std::string,unsigned> properties;
 struct NRed{static NRed& singleton(){static NRed n;return n;}void setProp32(const char*k,unsigned v){properties[k]=v;}
  unsigned getDeviceID(){return device;}static unsigned device;};unsigned NRed::device=0x15e7;
 struct Version{unsigned major(){return 25;}unsigned minor(){return 0;}bool majorMatches(unsigned v){return v==25;}};
-constexpr unsigned MACOS_26=25;static Version currentKernelVersion(){return {};}
+constexpr unsigned MACOS_26=25;constexpr unsigned MACOS_15_X=24;static Version currentKernelVersion(){return {};}
 static bool checkKernelArgument(const char*s){return strcmp(s,"-NRedLegacyBlend")==0;}
 struct KernelPatcher{static constexpr int KernelID=0;struct RouteRequest{template<typename T>RouteRequest(const char*,T,uint64_t&) {}};
  uint64_t solveSymbol(int,const char*){return 1;}void clearError(){}bool routeMultipleLong(int,RouteRequest*,int){return true;}};

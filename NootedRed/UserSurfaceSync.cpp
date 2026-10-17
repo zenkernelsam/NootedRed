@@ -410,11 +410,13 @@ void UserSurfaceSync::init(KernelPatcher& patcher)
         SYSLOG("UserSurfaceSync", "Unsupported render-fix device: 0x%X", deviceID);
         return;
     }
-    // Tahoe 小版本只决定是否进入核验；未知 UUID 必须通过完整驱动内容与引用目标核验。
-    if (!currentKernelVersion().majorMatches(MACOS_26)) {
+    // Darwin 24.6 is the current backport target; the cache must still pass the
+    // full dynamic resolver (UUID mismatch -> content/relocation verification).
+    if (!currentKernelVersion().majorMatches(MACOS_26) &&
+        !currentKernelVersion().majorMatches(MACOS_15_X)) {
         NRed::singleton().setProp32("NRedImmediateSyncRejected", 4);
-        SYSLOG("UserSurfaceSync", "Render fix requires Darwin 25; found %u.%u", currentKernelVersion().major(),
-               currentKernelVersion().minor());
+        SYSLOG("UserSurfaceSync", "Render fix requires Darwin 24.6 or 25; found %u.%u",
+               currentKernelVersion().major(), currentKernelVersion().minor());
         return;
     }
     getTaskMap = reinterpret_cast<GetTaskMap>(patcher.solveSymbol(KernelPatcher::KernelID, "_get_task_map"));
