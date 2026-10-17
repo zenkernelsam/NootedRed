@@ -256,7 +256,8 @@ void VCN::init()
                && currentKernelVersion().minor() == 6;
     // Darwin 24 only validates the bridge data. It must not allocate an engine,
     // advertise VCN0 or replace any X5000 accelerator class for GFX clients.
-    diagnosticBridge = darwin24;
+    // Default remains diagnostic-only; explicit opt-in re-enables the bridge.
+    diagnosticBridge = darwin24 && !checkKernelArgument("-NRedVCNEnable");
     if (requested) { lilu.onKextLoadForce(&x6000); }
 }
 bool VCN::ready()
