@@ -201,6 +201,8 @@ void X5000::processKext(KernelPatcher& patcher, const size_t id, const mach_vm_a
         {"__ZN30AMDRadeonX5000_AMDGFX9Hardware20initializeFamilyTypeEv", initializeFamilyType},
         {"__ZN30AMDRadeonX5000_AMDGFX9Hardware20allocateAMDHWDisplayEv", allocateAMDHWDisplay},
         {"__ZN26AMDRadeonX5000_AMDHWMemory17adjustVRAMAddressEy", wrapAdjustVRAMAddress, this->orgAdjustVRAMAddress},
+        {"__ZN26AMDRadeonX5000_AMDHWMemory19allocateLargeBlocksEP16AMDMemoryElementyyy15_eOP_ORIGINATOR9_eOP_TYPEb",
+         wrapAllocateLargeBlocks, this->orgAllocateLargeBlocks},
         {"__ZN30AMDRadeonX5000_AMDGFX9Hardware20writeASICHangLogInfoEPPv", returnZero},
         {"__ZN4Addr2V27Gfx9Lib20HwlConvertChipFamilyEjj", wrapHwlConvertChipFamily, this->orgHwlConvertChipFamily,
          kHwlConvertChipFamilyPattern},
@@ -389,6 +391,35 @@ UInt64 X5000::wrapAdjustVRAMAddress(void* const self, const UInt64 addr)
 {
     auto ret = FunctionCast(wrapAdjustVRAMAddress, singleton().orgAdjustVRAMAddress)(self, addr);
     if (ret != addr) { return ret + NRed::singleton().getFbOffset(); }
+    return ret;
+}
+
+UInt64 X5000::wrapAllocateLargeBlocks(void* const self, void* const element, const UInt64 size,
+                                      const UInt64 align, const UInt64 a5, const UInt32 a6,
+                                      const UInt32 a7, const UInt8 a8)
+{
+    auto ret = FunctionCast(wrapAllocateLargeBlocks, singleton().orgAllocateLargeBlocks)(
+        self, element, size, align, a5, a6, a7, a8);
+    if (ret == 0 || size >= 0x100000) {
+        auto* const p = static_cast<UInt8*>(self);
+        UInt64 e0 = 0, e1 = 0, e2 = 0, e3 = 0;
+        if (element) {
+            e0 = *reinterpret_cast<const UInt64*>(static_cast<const UInt8*>(element));
+            e1 = *reinterpret_cast<const UInt64*>(static_cast<const UInt8*>(element) + 8);
+            e2 = *reinterpret_cast<const UInt64*>(static_cast<const UInt8*>(element) + 16);
+            e3 = *reinterpret_cast<const UInt64*>(static_cast<const UInt8*>(element) + 24);
+        }
+        SYSLOG("X5000",
+               "allocLarge size=%llu align=%llu a5=%llu a6=%u a7=%u a8=%u ret=%llu "
+               "free=%llu fixed=%llu m13=%p m14=%p r8=%llu r10=%llu r11=%llu r12=%llu "
+               "e0=%016llX e1=%016llX e2=%016llX e3=%016llX",
+               size, align, a5, a6, a7, a8, ret,
+               *reinterpret_cast<const UInt64*>(p + 240), *reinterpret_cast<const UInt64*>(p + 248),
+               *reinterpret_cast<void* const*>(p + 104), *reinterpret_cast<void* const*>(p + 112),
+               *reinterpret_cast<const UInt64*>(p + 64), *reinterpret_cast<const UInt64*>(p + 80),
+               *reinterpret_cast<const UInt64*>(p + 88), *reinterpret_cast<const UInt64*>(p + 96),
+               e0, e1, e2, e3);
+    }
     return ret;
 }
 
