@@ -376,10 +376,10 @@ inline constexpr UInt8 ScratchPatched[] = {
     0x41, 0x5F, 0x5D, 0xC3
 };
 inline constexpr Patch ComputeScratchPatches[] = {
-    LegacyBlendPatches[0],
-    LegacyBlendPatches[1],
+    Patches[0],
+    Patches[1],
     {0, nullptr, nullptr, 0},
-    {0x310CFB11EULL, ScratchOriginal, ScratchPatched, sizeof(ScratchOriginal)}
+    {0, nullptr, nullptr, 0}
 };
 inline constexpr UInt8 ScratchPatched15D8[] = {
     0x55, 0x48, 0x89, 0xE5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48, 0x83, 0xEC,

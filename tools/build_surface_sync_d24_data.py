@@ -111,11 +111,15 @@ def main():
     assert count == 1
 
     # The ImmediateSync-only guard must not read a Tahoe ComputeScratch offset.
-    header, count = re.subn(r'(inline constexpr Patch ComputeScratchPatches\[\] = \{\n'
-                            r'    LegacyBlendPatches\[0\],\n'
-                            r'    LegacyBlendPatches\[1\],\n)'
-                            r'    LegacyBlendPatches\[2\]',
-                            r'\1    {0, nullptr, nullptr, 0}', header, count=1)
+    # Keep the two current baseline patches and zero every extra guard entry.
+    patches_cs = ('inline constexpr Patch ComputeScratchPatches[] = {\n'
+                  '    Patches[0],\n'
+                  '    Patches[1],\n'
+                  '    {0, nullptr, nullptr, 0},\n'
+                  '    {0, nullptr, nullptr, 0}\n'
+                  '};')
+    header, count = re.subn(r'inline constexpr Patch ComputeScratchPatches\[\] = \{.*?\n\};',
+                            patches_cs, header, count=1, flags=re.S)
     assert count == 1
 
     guard_old = ('            const auto& extra = ComputeScratchPatches[i];\n'
@@ -123,8 +127,10 @@ def main():
     guard_new = ('            const auto& extra = ComputeScratchPatches[i];\n'
                  '            if (extra.size == 0) { continue; }\n'
                  '            if (readUser(')
-    assert guard_old in source
-    source = source.replace(guard_old, guard_new, 1)
+    if guard_old in source:
+        source = source.replace(guard_old, guard_new, 1)
+    elif guard_new not in source:
+        raise AssertionError("unexpected UserSurfaceSync guard")
 
     HEADER.write_text(header)
     SOURCE.write_text(source)
