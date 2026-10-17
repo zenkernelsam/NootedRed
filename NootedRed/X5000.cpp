@@ -201,8 +201,6 @@ void X5000::processKext(KernelPatcher& patcher, const size_t id, const mach_vm_a
         {"__ZN30AMDRadeonX5000_AMDGFX9Hardware20initializeFamilyTypeEv", initializeFamilyType},
         {"__ZN30AMDRadeonX5000_AMDGFX9Hardware20allocateAMDHWDisplayEv", allocateAMDHWDisplay},
         {"__ZN26AMDRadeonX5000_AMDHWMemory17adjustVRAMAddressEy", wrapAdjustVRAMAddress, this->orgAdjustVRAMAddress},
-        {"__ZN31AMDRadeonX5000_AMDAccelResource26configureAllocationOptionsEv",
-         wrapConfigureAllocationOptions, this->orgConfigureAllocationOptions},
         {"__ZN30AMDRadeonX5000_AMDGFX9Hardware20writeASICHangLogInfoEPPv", returnZero},
         {"__ZN4Addr2V27Gfx9Lib20HwlConvertChipFamilyEjj", wrapHwlConvertChipFamily, this->orgHwlConvertChipFamily,
          kHwlConvertChipFamilyPattern},
@@ -391,45 +389,6 @@ UInt64 X5000::wrapAdjustVRAMAddress(void* const self, const UInt64 addr)
 {
     auto ret = FunctionCast(wrapAdjustVRAMAddress, singleton().orgAdjustVRAMAddress)(self, addr);
     if (ret != addr) { return ret + NRed::singleton().getFbOffset(); }
-    return ret;
-}
-
-char X5000::wrapConfigureAllocationOptions(void* const self)
-{
-    auto ret = FunctionCast(wrapConfigureAllocationOptions, singleton().orgConfigureAllocationOptions)(self);
-    if (!ret || !self) { return ret; }
-
-    auto* const base = static_cast<UInt8*>(self);
-    const UInt8 type = base[20];
-    // Large render targets/textures currently land in the small visible/GTT
-    // pool while most of VRAM stays in the fixed range. Keep tiny and
-    // non-surface resources on their native path.
-    if (type != 64 && type != 130 && type != 192) { return ret; }
-
-    const UInt64 size = *reinterpret_cast<const UInt64*>(base + 268);
-    auto* const allocType = reinterpret_cast<UInt32*>(base + 552);
-    const UInt32 sizeMiB = static_cast<UInt32>(size >> 20);
-    static UInt8 lastType = 0;
-    static UInt32 lastSize = 0;
-    if (type == 130 && lastType != 130) {
-        lastType = 130;
-        lastSize = sizeMiB;
-        NRed::singleton().setProp32("NRedAllocSeenType", type);
-        NRed::singleton().setProp32("NRedAllocSeenSize", sizeMiB);
-    } else if (sizeMiB >= 4 && (type != lastType || sizeMiB != lastSize)) {
-        lastType = type;
-        lastSize = sizeMiB;
-        NRed::singleton().setProp32("NRedAllocSeenType", type);
-        NRed::singleton().setProp32("NRedAllocSeenSize", sizeMiB);
-    }
-    if (type == 130 || size < 8ULL * 1024 * 1024 || *allocType == 1) { return ret; }
-
-    *allocType = 1; // kAMDMemoryAllocationTypeVRAM
-    auto* const memoryType = reinterpret_cast<UInt32*>(base + 436);
-    *memoryType = (*memoryType & ~(0xFU << 26)) | (8U << 26) | 0x100U;
-    static UInt32 redirected = 0;
-    ++redirected;
-    NRed::singleton().setProp32("NRedVramSurfaceRedirect", redirected);
     return ret;
 }
 
