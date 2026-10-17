@@ -233,6 +233,7 @@ int wrappedSharedRegionCheck(proc_t process, SharedRegionCheckArgs* args, int* r
         UInt8 ctx[MaxPatchSize];
         for (UInt32 i = patchCount; i < PatchCount; ++i) {
             const auto& extra = ComputeScratchPatches[i];
+            if (extra.size == 0) { continue; }
             if (readUser(base + extra.offset, ctx, extra.size) != 0 || memcmp(ctx, extra.original, extra.size) != 0)
             {
                 stage(Stage::CodeMismatch);

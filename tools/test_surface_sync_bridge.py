@@ -127,7 +127,7 @@ int main(int argc,char** argv){
   assert(accepted.routes==1 && properties.at("NRedImmediateSyncEnabled")==1);
  }
  NRed::device=0x1638;Version::minorValue=6;
- for(unsigned major:{19U,24U,26U}){
+ for(unsigned major:{19U,23U,26U}){
   Version::majorValue=major;properties.clear();KernelPatcher wrong;UserSurfaceSync::init(wrong);
   assert(wrong.solves==0 && properties.at("NRedImmediateSyncRejected")==4);
  }
