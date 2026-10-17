@@ -409,12 +409,11 @@ void* X5000::wrapPageon(void* const self, void* const event, const bool pageIn, 
         NRed::singleton().setProp32("NRedPageonSeenSize", sizeMiB);
     }
 
-    // The IOSurface branch overwrites the type with visible/SysMemory when
-    // this+532 is set. Large type 64 surfaces (IOSurface-backed or private)
-    // should use the VidMemory class (type 8 + bit 8), which allocates
-    // through the accelerator VRAM manager. Clear +532 only for the call so
-    // an IOSurface resource still skips the overwrite branch.
-    if (type != 64 || size < 8ULL * 1024 * 1024) {
+    // The IOSurface branch overwrites the type with visible/SysMemory. For
+    // large type 64 surfaces, skip it during this call and select the
+    // VidMemory class (type 8 + bit 8), which allocates through the VRAM
+    // manager.
+    if (type != 64 || base[532] != 1 || size < 8ULL * 1024 * 1024) {
         return FunctionCast(wrapPageon, singleton().orgPageon)(self, event, pageIn, arg);
     }
 
