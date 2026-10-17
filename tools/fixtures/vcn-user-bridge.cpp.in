@@ -31,7 +31,7 @@ static bool checkKernelArgument(const char* s){
  if(strcmp(s,"-NRedDarwin24")==0)return darwin24Flag;
  assert(false);return false;
 }
-namespace VCN { static bool active=true; bool allocated(){return active;} }
+namespace VCN { static bool active=true; static bool diagnostic=false; bool allocated(){return active;} bool diagnosticOnly(){return diagnostic;} }
 #define IONew(T,N) (new T[N])
 #define IODelete(P,T,N) delete[] P
 constexpr int KERN_RESOURCE_SHORTAGE=3;
@@ -86,7 +86,7 @@ static int writer(const void* p,uint64_t address,size_t size){
 }
 static void reset(){
  protection.clear();properties.clear();failProtect.clear();protectCalls=writeCalls=failWrite=originalResult=regionMode=0;
- invalidCache=noMap=false;seenStages=appliedCount=errorCount=0;isWindowServer=false;
+ invalidCache=noMap=false;seenStages=appliedCount=errorCount=0;isWindowServer=false;VCN::diagnostic=false;
  for(size_t i=0;i<MaxN;i++){auto& p=active()[i];memcpy(code[i].data(),p.original,p.size);if(i<N)protection[(base+p.offset)&~uint64_t(4095)]=5;}
  originalCheck=reinterpret_cast<uint64_t>(original);getTaskMap=map;queryRegion=query;readUser=reader;writeUser=writer;
 }
@@ -109,8 +109,11 @@ int main(){
  NRed::device=0x1638;
  for(unsigned major:{24U,25U,26U})for(unsigned minor:{0U,6U,7U}){
   darwin24Flag=major==24U&&minor==6U;
+  VCN::diagnostic=darwin24Flag;
   Version::majorValue=major;Version::minorValue=minor;KernelPatcher checked;UserVideoDecode::init(checked);
-  assert(checked.routes==int(major==25U||(major==24U&&minor==6U)));
+  // Darwin 24 is diagnostic-only: no userland hook is installed even though the gate admits it.
+  assert(checked.routes==int(major==25U));
+  if(darwin24Flag)assert(properties.at("NRedVCNUserDiagnosticOnly")==1);
  }
  darwin24Flag=false; Version::majorValue=25;Version::minorValue=6;
  for(unsigned host:{0x15E7U,0x1636U,0x1638U,0x164CU}){

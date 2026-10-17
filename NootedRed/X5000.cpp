@@ -329,7 +329,7 @@ bool X5000::allocateHWEngines(void* const self)
     [[clang::suppress]] singleton().pm4EngineField(self)   = singleton().pm4EngineMC->alloc();
     [[clang::suppress]] singleton().sdma0EngineField(self) = singleton().sdmaEngineMC->alloc();
 
-    if (VCN::ready()) {
+    if (VCN::activate()) {
         auto* engine = VCN::allocateEngine();
         // 复用本版本的引擎数组基址和原生类型枚举，不另设固定的 VCN 字段偏移。
         (singleton().pm4EngineField + kAMDHWEngineTypeVCN0 * sizeof(void*))(self) = engine;
@@ -361,7 +361,7 @@ void X5000::wrapSetupAndInitializeHWCapabilities(void* const self)
     singleton().supportedDisplayCountField(self) = 4;
     singleton().hasUVD0Field(self)               = false;
     singleton().hasVCEField(self)                = false;
-    singleton().hasVCN0Field(self)               = VCN::ready();
+    singleton().hasVCN0Field(self)               = VCN::activate();
     singleton().hasSDMAPagingQueueField(self)    = false;
     singleton().hasGetAllClockLimitsField(self)  = false;
     if (currentKernelVersion() >= MACOS_10_15) { singleton().dccDisplayableSupportField(self) = true; }

@@ -27,26 +27,42 @@
 使用 `-NRedVCN` 显式启用；保留已验证渲染基线的启动参数。
 默认关闭，未增加独显或其他 macOS 版本的支持。
 
-## Darwin 24.6 kernel candidate（实验性、仅源码候选）
+## Darwin 24.6 只读 ABI 校验（不是硬件激活候选）
 
-当前 fork 另有一组 **macOS 15.8.1 / Darwin 24.6** 的 kernel patch 数据，必须同时
+当前 fork 保留一组 **macOS 15.8.1 / Darwin 24.6** 的 kernel patch 数据，必须同时
 使用 `-NRedVCN -NRedDarwin24` 才会选择。普通 `-NRedVCN` 仍走 Tahoe 数据；没有
 `-NRedDarwin24` 时 Darwin 24 继续拒绝，避免误把候选加载到其它 15.x 小版本。
 
-该候选来自本机 Build 24.6 的 `SystemKernelExtensions.kc`（collection UUID
+该数据来自本机 Build 24.6 的 `SystemKernelExtensions.kc`（collection UUID
 `32F6A74A-0627-D0F9-6048-58AF2F562E12`）中的 `AMDRadeonX5000/X6000` fileset，
 不是从 Tahoe 偏移猜测。20 个 X6000 调用点中 16 个逐字节匹配，另外四个按当前
 函数边界重新核对：`setSuspendResumeState` 为 `0x28`，`writeDiagnosisReport`
 为 `0x52B/0x7AD/0x9C3`。Darwin 24 的第一个硬件 getter 去掉了 Tahoe 版本的
 `and 1`，因此使用独立的 ABI guard 表。
 
-这只是 kernel bridge candidate。`UserVideoDecode`、`UserSurfaceSync` 和
-ComputeScratch 仍保留 Darwin 25 门槛，用户态 cache 尚未迁移；因此它不等于硬解、
-Metal 或 WindowServer 稳定性证明，也没有部署到 USB。后续若要继续，必须以当前
-dyld cache UUID `42ec2890bc40317ebb2745142bff7f26` 重新生成并核验用户态补丁，
-再单独做 build-only sanitizer 回归。
+但在 Darwin 24 下这条路径**只做只读核验**：`processKext` 在两侧 ABI 通过后立即
+返回，不安装 X5000/X6000 hook、不写任何调用点、不分配 VCN 引擎、不设置
+`hasVCN0`、不替换 `AMDAccelShared`/`AMDAccelSharedUserClient`、不切换
+SML/`safeCast`，也不安装 `UserVideoDecode` 的 shared-region hook。因此
+`-NRedVCN -NRedDarwin24` 只发布诊断属性，不会在 VCN0 没有提交任何命令时改变
+GFX engine/channel setup。
+
+原因是硬件激活会无条件改变共享加速器对象和 GFX 引擎数组；本机 `.gpuRestart`
+证据显示 stock release 4（没有 VCN 参数）同样在 QQ/Discord 的 GFX/compute 通道
+上 reset，且 reset 报告中 VCN0 为 `Disabled`、VCN 命令数为 0。VCN 不是该 GFX
+故障的唯一原因；在 X5000/X6000 共享类兼容性和基线 GFX/surface 问题未解决前，
+不应开放 Darwin 24 硬件激活。
+
+当前 USB 实验参数保持 `-NRedVCN -NRedDarwin24`，但 kext 只验证 ABI。期望属性：
+`NRedVCNDarwin24DiagnosticOnly=1`、`NRedVCNEngineAllocated=0`、
+`NRedVCNUserDiagnosticOnly=1`、两侧 `ABIValidated=1`、两侧 `Prepared=0`、
+`NativeLoadReady=0`。VCN0 不创建/不启动，用户态解码补丁不安装。这不等于硬解、
+Metal 或 WindowServer 稳定性证明。
 
 ## 实现
+
+以下引擎、通道、SML 和用户态接入只在 `VCN::activate()` 为真时执行；Darwin 24 的
+只读路径不会进入。Tahoe 行为保持不变。
 
 X5000 加速器启动前请求可选加载 X6000；只有同步加载、两侧 hook 准备成功才接入
 原生 VCN2 引擎、视频上下文与客户端。加载失败／延迟时不在既有实例中途启用。
@@ -123,6 +139,10 @@ Apple TV 在线观看的密钥请求及系统网络／音频 panic 需要独立�
 用户态的 1/2 仍表示符号缺失 / hook 失败。
 `NRedVCNKernelABIRejected=1` 表示桥接依赖的虚表或 getter 不符；
 `NRedVCNX5000ABIValidated` / `X6000ABIValidated` 表示对应驱动核验通过，不能代替真实硬解结果。
+Darwin 24 只读路径还应看到 `NRedVCNDarwin24DiagnosticOnly=1`、
+`NRedVCNEngineAllocated=0`、两侧 `Prepared=0`、`NativeLoadReady=0` 和
+`NRedVCNUserDiagnosticOnly=1`；这些表示桥接已核验但未激活，不是失败。
+`NRedVCNEngineSkippedDiagnostic` 只在代码尝试分配引擎时出现，正常只读启动不会设置。
 
 `NativeLoadReady`、`EngineAllocated`、`LastHardwareInit`、`UserApplied` 和 `DecoderPID`
 分别记录内核准备、引擎分配、真实硬件初始化、用户态事务和解码进程。

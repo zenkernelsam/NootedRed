@@ -403,6 +403,13 @@ void UserVideoDecode::init(KernelPatcher& patcher)
         SYSLOG("UserVideoDecode", "VCN capability rejected: device=0x%X reason=%u", deviceID, rejected);
         return;
     }
+    if (VCN::diagnosticOnly()) {
+        // The Darwin 24 bridge has no engine and no GFX hooks; patching userland
+        // decode here would add risk without a usable kernel engine.
+        NRed::singleton().setProp32("NRedVCNUserDiagnosticOnly", 1);
+        SYSLOG("UserVideoDecode", "Darwin 24 bridge is diagnostic-only; userland hooks not installed");
+        return;
+    }
     devicePatches = UserVideoDecodeData::findDevice(deviceID);
     if (!devicePatches) {
         NRed::singleton().setProp32("NRedVCNUserRejected", 3);

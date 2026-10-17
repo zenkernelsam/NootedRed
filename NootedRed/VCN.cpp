@@ -18,7 +18,8 @@ namespace
     static const char*      path = "/System/Library/Extensions/AMDRadeonX6000.kext/Contents/MacOS/AMDRadeonX6000";
     KernelPatcher::KextInfo x6000{"com.apple.kext.AMDRadeonX6000",  &path, 1, {true}, {},
                                   KernelPatcher::KextInfo::Unloaded};
-    bool                    requested{false}, darwin24{false}, has5000{false}, has6000{false}, hooks{false}, engineAllocated{false};
+    bool                    requested{false}, darwin24{false}, diagnosticBridge{false};
+    bool                    has5000{false}, has6000{false}, hooks{false}, engineAllocated{false};
     bool                    loadAttempted{false}, loadCompleted{false};
     mach_vm_address_t       acceleratorStartOriginal{0};
     mach_vm_address_t       safeCastOriginal{0}, newSharedOriginal{0}, newClientOriginal{0}, newVideoOriginal{0};
@@ -88,7 +89,7 @@ namespace
         using Cast                             = OSMetaClassBase* (*)(const OSMetaClassBase*, const OSMetaClass*);
         auto                          original = reinterpret_cast<Cast>(safeCastOriginal);
         auto*                         result   = original(object, target);
-        if (result || !object || !VCN::ready()) { return result; }
+        if (result || !object || !VCN::activate()) { return result; }
         for (const auto& pair : pairs) {
             const auto* alternative = target == pair.oldClass ? pair.newClass :
                                       target == pair.newClass ? pair.oldClass :
@@ -165,7 +166,7 @@ namespace
     void* createSML(UInt32 configuration)
     {
         // GFX9 专用配置保留原生 GFX9 SML；其他配置使用含 VCN 描述的通用接口。
-        if (VCN::ready() && (configuration & 0xFFF8FFFFU) != 0) {
+        if (VCN::activate() && (configuration & 0xFFF8FFFFU) != 0) {
             // 原生 X6000 的宽松掩码会选择 GFX10；最低位只用于选择通用构造器，不传入构造器。
             return reinterpret_cast<void* (*)(UInt32)>(sml6000)(configuration | 1U);
         }
@@ -253,17 +254,23 @@ void VCN::init()
     requested = checkKernelArgument("-NRedVCN");
     darwin24 = checkKernelArgument("-NRedDarwin24") && currentKernelVersion().majorMatches(MACOS_15_X)
                && currentKernelVersion().minor() == 6;
+    // Darwin 24 only validates the bridge data. It must not allocate an engine,
+    // advertise VCN0 or replace any X5000 accelerator class for GFX clients.
+    diagnosticBridge = darwin24;
     if (requested) { lilu.onKextLoadForce(&x6000); }
 }
 bool VCN::ready()
 {
     return supported() && __atomic_load_n(&loadCompleted, __ATOMIC_ACQUIRE) && has5000 && has6000 && hooks;
 }
-bool  VCN::allocated() { return ready() && engineAllocated; }
+bool VCN::diagnosticOnly() { return diagnosticBridge; }
+bool VCN::activate() { return ready() && !diagnosticBridge; }
+bool  VCN::allocated() { return activate() && engineAllocated; }
 void* VCN::allocateEngine()
 {
-    if (!ready()) {
+    if (!activate()) {
         NRed::singleton().setProp32("NRedVCNAllocationSkipped", requested);
+        if (diagnosticBridge) { NRed::singleton().setProp32("NRedVCNEngineSkippedDiagnostic", 1); }
         return nullptr;
     }
     auto* engine    = engineClass->alloc();
@@ -291,6 +298,14 @@ void VCN::processKext(KernelPatcher& patcher, size_t id, mach_vm_address_t slide
         return;
     }
     NRed::singleton().setProp32(old ? "NRedVCNX5000ABIValidated" : "NRedVCNX6000ABIValidated", 1);
+    if (diagnosticBridge) {
+        // Read-only bridge: verify both sides, then leave every X5000/X6000 hook uninstalled.
+        NRed::singleton().setProp32("NRedVCNDarwin24DiagnosticOnly", 1);
+        NRed::singleton().setProp32("NRedVCNEngineAllocated", 0);
+        NRed::singleton().setProp32(old ? "NRedVCNX5000Prepared" : "NRedVCNX6000Prepared", 0);
+        SYSLOG("VCN", "%s Darwin 24 ABI verified; diagnostic-only, GFX untouched", old ? "X5000" : "X6000");
+        return;
+    }
     bool ok = true;
     for (size_t i = 0; i < arrsize(classes); ++i) {
         char name[112];
