@@ -201,6 +201,7 @@ void X5000::processKext(KernelPatcher& patcher, const size_t id, const mach_vm_a
         {"__ZN30AMDRadeonX5000_AMDGFX9Hardware20initializeFamilyTypeEv", initializeFamilyType},
         {"__ZN30AMDRadeonX5000_AMDGFX9Hardware20allocateAMDHWDisplayEv", allocateAMDHWDisplay},
         {"__ZN26AMDRadeonX5000_AMDHWMemory17adjustVRAMAddressEy", wrapAdjustVRAMAddress, this->orgAdjustVRAMAddress},
+        {"__ZN31AMDRadeonX5000_AMDAccelResource6pageonEP12IOAccelEventby", wrapPageon, this->orgPageon},
         {"__ZN30AMDRadeonX5000_AMDGFX9Hardware20writeASICHangLogInfoEPPv", returnZero},
         {"__ZN4Addr2V27Gfx9Lib20HwlConvertChipFamilyEjj", wrapHwlConvertChipFamily, this->orgHwlConvertChipFamily,
          kHwlConvertChipFamilyPattern},
@@ -389,6 +390,44 @@ UInt64 X5000::wrapAdjustVRAMAddress(void* const self, const UInt64 addr)
 {
     auto ret = FunctionCast(wrapAdjustVRAMAddress, singleton().orgAdjustVRAMAddress)(self, addr);
     if (ret != addr) { return ret + NRed::singleton().getFbOffset(); }
+    return ret;
+}
+
+void* X5000::wrapPageon(void* const self, void* const event, const bool pageIn, const UInt64 arg)
+{
+    auto* const base = static_cast<UInt8*>(self);
+    const UInt8 type = base[20];
+    const UInt64 size = *reinterpret_cast<const UInt64*>(base + 268);
+    const UInt32 sizeMiB = static_cast<UInt32>(size >> 20);
+    static UInt8 lastType = 0;
+    static UInt32 lastSize = 0;
+    if ((type == 64 || type == 130 || type == 192) && sizeMiB >= 4 &&
+        (type != lastType || sizeMiB != lastSize)) {
+        lastType = type;
+        lastSize = sizeMiB;
+        NRed::singleton().setProp32("NRedPageonSeenType", type);
+        NRed::singleton().setProp32("NRedPageonSeenSize", sizeMiB);
+    }
+
+    // The IOSurface branch overwrites the type with visible/SysMemory. For
+    // large type 64 surfaces, skip it during this call and select the
+    // VidMemory class (type 8 + bit 8), which allocates through the VRAM
+    // manager.
+    if (type != 64 || base[532] != 1 || size < 8ULL * 1024 * 1024) {
+        return FunctionCast(wrapPageon, singleton().orgPageon)(self, event, pageIn, arg);
+    }
+
+    const UInt8 old532 = base[532];
+    auto* const memoryType = reinterpret_cast<UInt32*>(base + 436);
+    const UInt32 oldType = *memoryType;
+    base[532] = 0;
+    *memoryType = (oldType & ~(0xFU << 26)) | (8U << 26) | 0x100U;
+    auto ret = FunctionCast(wrapPageon, singleton().orgPageon)(self, event, pageIn, arg);
+    base[532] = old532;
+    *memoryType = oldType;
+    static UInt32 forced = 0;
+    ++forced;
+    NRed::singleton().setProp32("NRedPageonVidMemForced", forced);
     return ret;
 }
 
