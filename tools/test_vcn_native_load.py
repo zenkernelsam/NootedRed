@@ -22,6 +22,12 @@ def main():
     source = (ROOT / "NootedRed/VCN.cpp").read_text()
     assert re.search(r'\{"__ZN37AMDRadeonX5000_AMDGraphicsAccelerator5startEP9IOService",\s*acceleratorStart,', source)
     assert "OSKextLoadKextWithIdentifier" not in function(source, "void VCN::init()")
+    init = function(source, "void VCN::init()")
+    process = function(source, "void VCN::processKext(")
+    assert "NRed::singleton().setProp32" not in init, "early VCN init runs before NRed has an iGPU provider"
+    assert process.index("if (!supported()) { return; }") < process.index("const auto old = id == kextRadeonX5000.loadIndex;")
+    assert process.index("if (!old && id != x6000.loadIndex) { return; }") < process.index(
+        'setProp32("NRedVCNDarwin24Requested", 1)')
     functions = "\n".join(function(source, p) for p in ["bool supported()", "bool acceleratorStart(", "bool VCN::ready()"])
     fixture = (ROOT / "tools/fixtures/vcn-native-load.cpp.in").read_text()
     WORK.mkdir(parents=True, exist_ok=True)

@@ -253,7 +253,6 @@ void VCN::init()
     requested = checkKernelArgument("-NRedVCN");
     darwin24 = checkKernelArgument("-NRedDarwin24") && currentKernelVersion().majorMatches(MACOS_15_X)
                && currentKernelVersion().minor() == 6;
-    if (darwin24) { NRed::singleton().setProp32("NRedVCNDarwin24Requested", 1); }
     if (requested) { lilu.onKextLoadForce(&x6000); }
 }
 bool VCN::ready()
@@ -279,6 +278,7 @@ void VCN::processKext(KernelPatcher& patcher, size_t id, mach_vm_address_t slide
     if (!supported()) { return; }
     const auto old = id == kextRadeonX5000.loadIndex;
     if (!old && id != x6000.loadIndex) { return; }
+    if (darwin24) { NRed::singleton().setProp32("NRedVCNDarwin24Requested", 1); }
     if (!verifyKernelABI(patcher, id, slide, size, old, darwin24)) {
         if (old) { has5000 = false; }
         else {
