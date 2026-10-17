@@ -13,47 +13,40 @@ from cache_resolver_data import ResolverData
 
 ROOT = Path(__file__).resolve().parents[1]
 WORK = ROOT / "build/vcn"
-GVA_CHOICE_ADDRESS = 0x7FFA0C59BBAC
-GVA_CHOICE_SIZE = 1136
-GVA_CHOICE_SHA256 = "b7c725552045a9db206ab2eed4edda7ea3d27a29de2feee782204c362764a33d"
+GVA_CHOICE_ADDRESS = 0x7FFA06692198
+GVA_CHOICE_SIZE = 1704
+GVA_CHOICE_SHA256 = "1836eb3109e90afac34824654063b2cab953dbb55903cb94f222850a1fa67523"
 HASHES = {
-    "__ZN17VAAcceleratorInfo8identifyEjj": "d7c579bce55c5724ec241f7f9abece9d0f23b1c30178d2f539fc0cabf41dc0bd",
+    "__ZN17VAAcceleratorInfo8identifyEjj": "dd95fd9d1ea9740465bcefa6d68770a0ebbb6e8161e97939be19ff1c1671737e",
     "__ZN18VAAddrLibInterface4initEP11VAIOConnectP13sHardwareInfo":
-        "b35bd96d6ca0b8bd9047af67fc3f0f77ef09242f684c65e17d4cee062af155ea",
+        "abafc0170bb2bfa7c333371531e68cc01c237d6ddf4f297711f71c6f0773a264",
     "__ZN4Addr2V27Gfx9Lib20HwlConvertChipFamilyEjj":
         "4a4a1d2337e580de8dcd851ec686179bc375639441ebf7020dcca69ea780f8fa",
     "__ZN4Addr3Lib6CreateEPK18_ADDR_CREATE_INPUTP19_ADDR_CREATE_OUTPUT":
-        "b52b9103faa80681fff4d65758ac961b9a3263add45c7597ea7074e61e4fb685",
+        "b0a123ffae9ff1b251077346fe12ba2640c007bdbb12ec15716855c5bf160063",
     "__ZN9VAFactory20createGraphicsEngineEP9VAContext":
-        "0cca569382df5a722cd0a569536315566bc0351207ae7fe0cb1ae4cca67a1327",
+        "65ac04e1da1d0c5445de83db24583ffbfb29f2851928dc44cddb885c0d7846fc",
     "__ZN9VAFactory14createImageBltEP9VAContextj":
-        "c5261154448c0030e75bf1e0f83a5152cb060d05857e317591b2a99ec18ab928",
-    "__ZN9VAFactory17createDeblockerVPEi": "c1ff92f8d8465dfbf165087549acb38a393c633ae8766bb668f93a36e9cf5f14",
-    "__ZN9VAFactory17createDitheringVPEi": "9655251548842be724c1dcd05f22d7dcf114a8923350fd69cef9ac3e7ec35a76",
-    "__ZN9VAFactory20createDeinterlacerVPEi": "eb331d24e2a37de70736a36082d565cf2a39b31e57eedb8e9faa47172598ab8d",
+        "7052a8a0a8a73e5aac554bfd00a395e48a30af2de23587f0986710bd034cd2a2",
+    "__ZN9VAFactory17createDeblockerVPEi": "58fcd2efbaca0055df4e6dbb2bd54da7d6fc07e9beebbd216cb047eeb9c2271e",
+    "__ZN9VAFactory17createDitheringVPEi": "7bbd8395c27103ac3c5a7188fa79ef50b03c95cacf3dc6d5edee6fa8a7b9e72b",
+    "__ZN9VAFactory20createDeinterlacerVPEi": "3eeaf7d7db19379578209f019145ef116dc1526ee091b3e42e43255a07ac89ad",
     "__ZN9VAFactory29createColourFormatConverterVPEi":
-        "5eb36cfc6c78526c1a3d4613cf55cb8d0f4c3a5967ecac16755b11d5ecdbac71",
+        "8ed81834c8e63adc03f7714b2cf866a15db0d4ee444e6d8be66363cbb17369cd",
     "__ZN9VAFactory31createDynamicContrastEnhancerVPEi":
-        "32d515a6ca3132d7fa258389d7bb109a3541508ee4814949e73fdd728f253dcd",
+        "d9e9dc85b70ed7c1f9fa236ba967bfe7f5fee5aee3d3f9fb88a1b44b85fd184b",
     "__ZN14Vcn2EncCommand15getFeedbackSizeEv":
         "571d3ec0d74000c103203b60450b43b67d758b74b470d0082d45879723021c7a",
     "__ZN26AVDVcn2AvcEncDataProcessor19ProcessEncodeStatusEP19_VAEncodeStatusInfoPvP15VAVendorTexture":
-        "d51bd9c906e803b9fc9b1b247a79f30059ebec4cfcb92f4492dfc1ed6fa21230",
+        "fe78c5a8d4508c9a0eab2ba96830634b5f8f8a7982b06cd91c2bc1f6a1e2f493",
     "__ZN27AVDVcn2HevcEncDataProcessor19ProcessEncodeStatusEP19_VAEncodeStatusInfoPvP15VAVendorTexture":
-        "1c3726a90b3e8f1d320700b05d3bf6cf9c7f49bd4afae0a2aac1cb44aaaaf038",
+        "0ff1d68ec316f8497278a3be223c2eabe642f68e894fa7ecc808e70168c5b2c2",
     "__ZN11Vcn2Encoder15setEncodeParamsEPvP15VAVendorTexture":
         "c8193ea2d2c7193012a5618b6918d41fffe30ad0c1389256fee983e66ac24347",
 }
 # 短 getter 需要至少 32 字节锚点；两个编码器的 pitch 函数完全相同，需要相邻完整函数区分。
 # 相邻函数仅参与完整匹配和重定位核验，不修改其字节。
-ENCODE_CONTEXTS = {
-    "__ZN14Vcn2EncCommand15getFeedbackSizeEv": (
-        "__ZN14Vcn2EncCommand20addSessionInitPacketEv", 36,
-        "053f7d73eba9f63f788d33260cea0e3a81e0850b62795d165948349bf15fc5d0"),
-    "__ZN11Vcn2Encoder15setEncodeParamsEPvP15VAVendorTexture": (
-        "__ZN11Vcn2Encoder18setAvcEncodeParamsEPv", 292,
-        "f1a48a1a06df4907da861452b1339311d836e1dde21167e6d15b0dfa9204ab3d"),
-}
+ENCODE_CONTEXTS = {}
 
 
 def compile_payload(source, label):
@@ -140,19 +133,20 @@ def main():
                 raise ValueError("补丁长度不相等")
             records.append({"label": name, "address": address, "original": original.hex(), "patched": patched.hex()})
 
+        # Build 24.6 has a different board-id path from the historical
+        # MacBook-only fallback. Profile the selector, but do not patch it until
+        # a board-specific current branch is proven.
         gva_choice = cache.read(GVA_CHOICE_ADDRESS, GVA_CHOICE_SIZE)
         if hashlib.sha256(gva_choice).hexdigest() != GVA_CHOICE_SHA256:
             raise ValueError("AppleGVA 选择函数未核实，拒绝生成")
-        assert gva_choice[0x287:0x28D] == bytes.fromhex("0f84ac010000")
-        # 非专用 AMD 机型的原生回退只选择 Intel；无 Intel 时跳到已有的 AMD 插入路径。
-        # 此前已检查至少存在一个可用 GPU，因此该出口必有 AMD，其他选择与显式请求不变。
-        add("AppleGVA_AMDOnlyFallback", GVA_CHOICE_ADDRESS + 0x287,
-            gva_choice[0x287:0x28D], bytes.fromhex("0f842a000000"))
 
         name = "__ZN17VAAcceleratorInfo8identifyEjj"
         address, original = function(name)
-        identify_variants = {device: identify_payload(original, device, family) for device, family in capabilities}
-        add(name, address, original, identify_variants[0x1638])
+        # Darwin 24.6 returns enum 11 for Renoir/Cezanne IDs. Change only the
+        # default five-byte immediate in the device-gated patch set; all native
+        # classification paths remain intact.
+        assert original[0x11:0x16] == bytes.fromhex("bb0b000000")
+        add(name, address + 0x11, original[0x11:0x16], bytes.fromhex("bb05000000"))
         for name, offset in [("__ZN9VAFactory20createGraphicsEngineEP9VAContext", 10),
                              ("__ZN9VAFactory14createImageBltEP9VAContextj", 11)]:
             address, code = function(name)
@@ -180,27 +174,7 @@ def main():
         name = "__ZN4Addr2V27Gfx9Lib20HwlConvertChipFamilyEjj"
         address, code = function(name)
         add(name, address, code, compile_payload((ROOT / "tools/video_addr_convert.s").read_text(), "addr-convert"))
-        # 本机固件写入 48 字节反馈；原生 Vcn2 使用 164 字节，后续帧因此读到零或无关数据。
-        name = "__ZN14Vcn2EncCommand15getFeedbackSizeEv"
-        address, code = function(name)
-        assert code[4:9] == bytes.fromhex("b8a4000000")
-        add(name, address + 4, code[4:9], bytes.fromhex("b830000000"))
-        for name in [
-            "__ZN26AVDVcn2AvcEncDataProcessor19ProcessEncodeStatusEP19_VAEncodeStatusInfoPvP15VAVendorTexture",
-            "__ZN27AVDVcn2HevcEncDataProcessor19ProcessEncodeStatusEP19_VAEncodeStatusInfoPvP15VAVendorTexture",
-        ]:
-            address, code = function(name)
-            assert code[0x2A:0x31] == bytes.fromhex("4869c0a4000000")
-            add(name, address + 0x2A, code[0x2A:0x31], bytes.fromhex("4869c030000000"))
-        # 输入纹理的实际 pitch 可大于编码宽度；保留原生的字节到元素换算及半宽色度布局。
-        name = "__ZN11Vcn2Encoder15setEncodeParamsEPvP15VAVendorTexture"
-        address, code = function(name)
-        assert code[0x31:0x56] == bytes.fromhex(
-            "8b8a840000008b87240400000fafc105ff0000002500ffffff31d2f7f1894318d1e889431c")
-        pitch = compile_payload(".text\n.globl _payload\n_payload:\n"
-            "movl 0x80(%rdx), %eax\nmovl 0x84(%rdx), %ecx\nxorl %edx, %edx\ndivl %ecx\n"
-            "movl %eax, 0x18(%rbx)\nshrl %eax\nmovl %eax, 0x1c(%rbx)\n.org 37, 0x90\n", "encode-pitch")
-        add(name, address + 0x31, code[0x31:0x56], pitch)
+        # Encode-side patches are not part of this Darwin 24 decode candidate.
         code_section = next(s for s in sections if s[0] == "__text")
         text = cache.read(code_section[1], code_section[2])
         for old, new in [(0x2220221, 0x2020201), (0x6660661, 0x6060601)]:
@@ -218,7 +192,7 @@ def main():
                 raise ValueError("swizzle mask 数量不匹配")
         records.sort(key=lambda r: r["address"])
         resolver = ResolverData(cache, WORK)
-        functions = {"AppleGVA_AMDOnlyFallback": (GVA_CHOICE_ADDRESS, gva_choice), **full_functions}
+        functions = {**full_functions}
         for record in records:
             label = record["label"]
             if label not in functions:
@@ -254,28 +228,14 @@ def main():
             header += f'    {{0x{record["address"] - cache.base:X}ULL, Original{i}, Patched{i}, sizeof(Original{i})}},\n'
         pages = len({r["address"] // 4096 for r in records})
         header += "};\n"
-        identify_index = next(i for i, record in enumerate(records) if record['label'] == '__ZN17VAAcceleratorInfo8identifyEjj')
         device_records = []
         for device, _ in capabilities:
             variants = [dict(record) for record in records]
-            variants[identify_index]['patched'] = identify_variants[device].hex()
             device_records.append({'device_id': device, 'records': variants})
-            if device == 0x1638:
-                continue
-            suffix = f'{device:04X}'
-            header += array(f'Identify{suffix}', identify_variants[device])
-            header += f'inline constexpr Patch Patches{suffix}[] = {{\n'
-            for i in range(len(records)):
-                if i == identify_index:
-                    header += (f'    {{Patches[{i}].offset, Original{i}, Identify{suffix}, sizeof(Original{i})}},\n')
-                else:
-                    header += f'    Patches[{i}],\n'
-            header += '};\n'
         header += 'struct DevicePatchSet { UInt32 deviceID; const Patch* patches; };\n'
         header += 'inline constexpr DevicePatchSet DevicePatches[] = {\n'
         for device, _ in capabilities:
-            name = 'Patches' if device == 0x1638 else f'Patches{device:04X}'
-            header += f'    {{0x{device:04X}, {name}}},\n'
+            header += f'    {{0x{device:04X}, Patches}},\n'
         header += '};\n'
         header += ('inline constexpr const Patch* findDevice(UInt32 deviceID) {\n'
                    '    for (const auto& entry : DevicePatches) { if (entry.deviceID == deviceID) { return entry.patches; } }\n'

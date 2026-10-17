@@ -51,7 +51,7 @@ class CacheReader:
                 if path.name == "dyld_shared_cache_x86_64h":
                     self.magic, self.uuid = header[:16], header[88:104]
                     self.base = struct.unpack_from("<Q", data)[0]
-            if self.base != 0x7FF800000000 or self.uuid.hex() != "3137475689b434e8a34f56c5d57216a1":
+            if self.base != 0x7FF800000000 or self.uuid.hex() != "42ec2890bc40317ebb2745142bff7f26":
                 raise ValueError("缓存 UUID/base 未核实，拒绝生成")
             lines = (CACHE / "dyld_shared_cache_x86_64h.map").read_text().splitlines()
             self.image_base = int(lines[lines.index(IMAGE) + 1].split()[1], 16)

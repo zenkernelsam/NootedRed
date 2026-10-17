@@ -25,7 +25,12 @@ struct NRed {static NRed& singleton(){static NRed n;return n;}void setProp32(con
  unsigned getDeviceID(){return device; }static unsigned device;};unsigned NRed::device=0x1638;
 struct Version{unsigned major(){return majorValue;}unsigned minor(){return minorValue;}static unsigned majorValue,minorValue;};unsigned Version::majorValue=25;unsigned Version::minorValue=6;
 const PenguinWizardry::KernelVersion& currentKernelVersion(){static std::optional<PenguinWizardry::KernelVersion> current;return current.emplace(Version::majorValue,Version::minorValue);}
-static bool flag=true; static bool checkKernelArgument(const char* s){assert(strcmp(s,"-NRedVCN")==0);return flag;}
+static bool flag=true; static bool darwin24Flag=false;
+static bool checkKernelArgument(const char* s){
+ if(strcmp(s,"-NRedVCN")==0)return flag;
+ if(strcmp(s,"-NRedDarwin24")==0)return darwin24Flag;
+ assert(false);return false;
+}
 namespace VCN { static bool active=true; bool allocated(){return active;} }
 #define IONew(T,N) (new T[N])
 #define IODelete(P,T,N) delete[] P
@@ -103,10 +108,11 @@ int main(){
  }
  NRed::device=0x1638;
  for(unsigned major:{24U,25U,26U})for(unsigned minor:{0U,6U,7U}){
+  darwin24Flag=major==24U&&minor==6U;
   Version::majorValue=major;Version::minorValue=minor;KernelPatcher checked;UserVideoDecode::init(checked);
-  assert(checked.routes==int(major==25));
+  assert(checked.routes==int(major==25U||(major==24U&&minor==6U)));
  }
- Version::majorValue=25;Version::minorValue=6;
+ darwin24Flag=false; Version::majorValue=25;Version::minorValue=6;
  for(unsigned host:{0x15E7U,0x1636U,0x1638U,0x164CU}){
   NRed::device=host;KernelPatcher enabled;UserVideoDecode::init(enabled);assert(enabled.routes==1);
   assert(devicePatches==UserVideoDecodeData::findDevice(host));

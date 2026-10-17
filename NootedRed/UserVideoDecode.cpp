@@ -389,7 +389,10 @@ void UserVideoDecode::init(KernelPatcher& patcher)
     if (!checkKernelArgument("-NRedVCN")) { return; }
     const auto  deviceID   = NRed::singleton().getDeviceID();
     const auto* capability = VCNCapabilities::findDevice(deviceID);
-    const auto  rejected   = VCNCapabilities::rejection(deviceID, currentKernelVersion());
+    const bool  darwin24   = checkKernelArgument("-NRedDarwin24")
+                          && currentKernelVersion().majorMatches(MACOS_15_X)
+                          && currentKernelVersion().minor() == 6;
+    const auto  rejected   = VCNCapabilities::rejection(deviceID, currentKernelVersion(), darwin24);
     NRed::singleton().setProp32("NRedVCNRequested", 1);
     NRed::singleton().setProp32("NRedVCNCapabilityVersion", 2);
     NRed::singleton().setProp32("NRedVCNDeviceID", deviceID);
