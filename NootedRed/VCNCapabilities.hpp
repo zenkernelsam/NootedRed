@@ -33,14 +33,18 @@ namespace VCNCapabilities
         return nullptr;
     }
 
-    // 3=未知设备，4=非 Tahoe，5=未实现的视频代际；0 才允许进入驱动 ABI 核验。
-    inline constexpr UInt32 rejection(UInt32 deviceID, const PenguinWizardry::KernelVersion& version)
+    // 3=未知设备，4=版本未核验，5=未实现的视频代际；0 才允许进入驱动 ABI 核验。
+    // Darwin 24 is opt-in and is restricted to the exact 24.6 ABI used to generate
+    // the candidate data. Tahoe keeps the original default path.
+    inline constexpr UInt32 rejection(UInt32 deviceID, const PenguinWizardry::KernelVersion& version,
+                                      bool allowDarwin24 = false)
     {
         const auto* capability = findDevice(deviceID);
         if (!capability) { return 3; }
         if (capability->generation != Generation::VCN22 || capability->vaFamily == 0) { return 5; }
-        if (!version.majorMatches(MACOS_26)) { return 4; }
-        return 0;
+        if (version.majorMatches(MACOS_26)) { return 0; }
+        if (allowDarwin24 && version.majorMatches(MACOS_15_X) && version.minor() == 6) { return 0; }
+        return 4;
     }
 
 }    // namespace VCNCapabilities

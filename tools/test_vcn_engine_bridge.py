@@ -37,9 +37,9 @@ struct NRed {
     unsigned getDeviceID(){return device;}
     void setProp32(const char* k,unsigned v){properties[k]=v;}
 };
-unsigned kernelMinor=6;
-const PenguinWizardry::KernelVersion& currentKernelVersion(){static std::optional<PenguinWizardry::KernelVersion> current;return current.emplace(25,kernelMinor);}
-bool requested=true,loadCompleted=true,has5000=true,has6000=true,hooks=true,engineAllocated=false;
+unsigned kernelMajor=25,kernelMinor=6;
+const PenguinWizardry::KernelVersion& currentKernelVersion(){static std::optional<PenguinWizardry::KernelVersion> current;return current.emplace(kernelMajor,kernelMinor);}
+bool requested=true,darwin24=false,loadCompleted=true,has5000=true,has6000=true,hooks=true,engineAllocated=false;
 struct OSMetaClass {
     unsigned size=64;void* object=nullptr;
     unsigned getClassSize()const{return size;}
@@ -76,7 +76,7 @@ int main(){
     unsigned engineObject=1,pm4Object=2,sdmaObject=3;
     auto& x=X5000::singleton();x.pm4.object=&pm4Object;x.sdma.object=&sdmaObject;
     for(unsigned minor:{0U,1U,6U,7U,99U})for(unsigned id:{0x15E7U,0x1636U,0x1638U,0x164CU}){
-        kernelMinor=minor;
+        kernelMajor=25; kernelMinor=minor;darwin24=false;
         NRed::singleton().device=id;requested=loadCompleted=has5000=has6000=hooks=true;
         engineAllocated=false;engine.object=&engineObject;
         alignas(8) std::array<uint8_t,0x408> object{};
@@ -113,6 +113,11 @@ int main(){
         NRed::singleton().device=id;loadCompleted=has5000=has6000=hooks=true;
         assert(!VCN::ready()&&VCN::allocateEngine()==nullptr);
     }
+    // The Darwin 24 path is opt-in and only admits the exact 24.6 ABI tuple.
+    NRed::singleton().device=0x1638; requested=true; darwin24=true;
+    kernelMajor=24; kernelMinor=6; assert(VCN::ready());
+    kernelMinor=5; assert(!VCN::ready());
+    kernelMinor=6; darwin24=false; assert(!VCN::ready());
     NRed::singleton().device=0x1638;
     for(bool* state:{&requested,&loadCompleted,&has5000,&has6000,&hooks}){
         *state=false;assert(!VCN::ready());*state=true;

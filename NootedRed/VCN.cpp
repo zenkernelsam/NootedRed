@@ -18,7 +18,7 @@ namespace
     static const char*      path = "/System/Library/Extensions/AMDRadeonX6000.kext/Contents/MacOS/AMDRadeonX6000";
     KernelPatcher::KextInfo x6000{"com.apple.kext.AMDRadeonX6000",  &path, 1, {true}, {},
                                   KernelPatcher::KextInfo::Unloaded};
-    bool                    requested{false}, has5000{false}, has6000{false}, hooks{false}, engineAllocated{false};
+    bool                    requested{false}, darwin24{false}, has5000{false}, has6000{false}, hooks{false}, engineAllocated{false};
     bool                    loadAttempted{false}, loadCompleted{false};
     mach_vm_address_t       acceleratorStartOriginal{0};
     mach_vm_address_t       safeCastOriginal{0}, newSharedOriginal{0}, newClientOriginal{0}, newVideoOriginal{0};
@@ -43,7 +43,7 @@ namespace
 
     bool supported()
     {
-        return requested && VCNCapabilities::rejection(NRed::singleton().getDeviceID(), currentKernelVersion()) == 0;
+        return requested && VCNCapabilities::rejection(NRed::singleton().getDeviceID(), currentKernelVersion(), darwin24) == 0;
     }
 
     bool acceleratorStart(void* self, IOService* provider)
@@ -100,10 +100,12 @@ namespace
         return nullptr;
     }
 
-    bool verifyKernelABI(KernelPatcher& patcher, size_t id, mach_vm_address_t slide, size_t size, bool old)
+    bool verifyKernelABI(KernelPatcher& patcher, size_t id, mach_vm_address_t slide, size_t size, bool old,
+                         bool useDarwin24 = false)
     {
         if (size < 16 || slide > ~mach_vm_address_t{0} - size) { return false; }
-        const auto* guards = old ? VCNKernelData::Guards5000 : VCNKernelData::Guards6000;
+        const auto* guards = useDarwin24 ? (old ? VCNKernelData::GuardsDarwin24_5000 : VCNKernelData::GuardsDarwin24_6000)
+                                         : (old ? VCNKernelData::Guards5000 : VCNKernelData::Guards6000);
         static_assert(arrsize(VCNKernelData::Guards5000) == arrsize(VCNKernelData::Guards6000));
         mach_vm_address_t table{0};
         if (!resolve(patcher, id, old ? VCNKernelData::Table5000 : VCNKernelData::Table6000, table, slide, size)) {
@@ -188,13 +190,15 @@ namespace
     bool install(KernelPatcher& patcher, size_t id, mach_vm_address_t slide, size_t size)
     {
         if (size < 6 || slide > ~mach_vm_address_t{0} - size) { return false; }
-        mach_vm_address_t addresses[arrsize(VCNKernelData::Patches)]{};
+        const auto* patches = darwin24 ? VCNKernelData::PatchesDarwin24 : VCNKernelData::Patches;
+        constexpr auto patchCount = arrsize(VCNKernelData::Patches);
+        mach_vm_address_t addresses[patchCount]{};
         mach_vm_address_t signal{0};
         if (!resolve(patcher, id, "__ZN26AMDRadeonX6000_AMDHardware22signalGPUWorkSubmittedEv", signal, slide, size)) {
             return false;
         }
-        for (size_t i = 0; i < arrsize(VCNKernelData::Patches); ++i) {
-            const auto&       patch = VCNKernelData::Patches[i];
+        for (size_t i = 0; i < patchCount; ++i) {
+            const auto&       patch = patches[i];
             mach_vm_address_t function{0};
             if (!resolve(patcher, id, patch.symbol, function, slide, size)) { return false; }
             addresses[i] = function + patch.offset;
@@ -207,8 +211,8 @@ namespace
             }
         }
         if (MachInfo::setKernelWriting(true, KernelPatcher::kernelWriteLock) != KERN_SUCCESS) { return false; }
-        for (size_t i = 0; i < arrsize(VCNKernelData::Patches); ++i) {
-            const auto& patch = VCNKernelData::Patches[i];
+        for (size_t i = 0; i < patchCount; ++i) {
+            const auto& patch = patches[i];
             UInt8       replacement[6];
             memcpy(replacement, patch.original, sizeof(replacement));
             if (patch.newSlot) { memcpy(replacement + 2, &patch.newSlot, sizeof(patch.newSlot)); }
@@ -232,8 +236,8 @@ namespace
         if (!patcher.routeMultiple(id, routes, arrsize(routes), slide, size)) {
             patcher.clearError();
             if (MachInfo::setKernelWriting(true, KernelPatcher::kernelWriteLock) == KERN_SUCCESS) {
-                for (size_t i = 0; i < arrsize(VCNKernelData::Patches); ++i) {
-                    memcpy(reinterpret_cast<void*>(addresses[i]), VCNKernelData::Patches[i].original, 6);
+                for (size_t i = 0; i < patchCount; ++i) {
+                    memcpy(reinterpret_cast<void*>(addresses[i]), patches[i].original, 6);
                 }
                 MachInfo::setKernelWriting(false, KernelPatcher::kernelWriteLock);
             }
@@ -247,6 +251,9 @@ namespace
 void VCN::init()
 {
     requested = checkKernelArgument("-NRedVCN");
+    darwin24 = checkKernelArgument("-NRedDarwin24") && currentKernelVersion().majorMatches(MACOS_15_X)
+               && currentKernelVersion().minor() == 6;
+    if (darwin24) { NRed::singleton().setProp32("NRedVCNDarwin24Requested", 1); }
     if (requested) { lilu.onKextLoadForce(&x6000); }
 }
 bool VCN::ready()
@@ -272,7 +279,7 @@ void VCN::processKext(KernelPatcher& patcher, size_t id, mach_vm_address_t slide
     if (!supported()) { return; }
     const auto old = id == kextRadeonX5000.loadIndex;
     if (!old && id != x6000.loadIndex) { return; }
-    if (!verifyKernelABI(patcher, id, slide, size, old)) {
+    if (!verifyKernelABI(patcher, id, slide, size, old, darwin24)) {
         if (old) { has5000 = false; }
         else {
             has6000 = hooks = false;

@@ -27,6 +27,25 @@
 使用 `-NRedVCN` 显式启用；保留已验证渲染基线的启动参数。
 默认关闭，未增加独显或其他 macOS 版本的支持。
 
+## Darwin 24.6 kernel candidate（实验性、仅源码候选）
+
+当前 fork 另有一组 **macOS 15.8.1 / Darwin 24.6** 的 kernel patch 数据，必须同时
+使用 `-NRedVCN -NRedDarwin24` 才会选择。普通 `-NRedVCN` 仍走 Tahoe 数据；没有
+`-NRedDarwin24` 时 Darwin 24 继续拒绝，避免误把候选加载到其它 15.x 小版本。
+
+该候选来自本机 Build 24.6 的 `SystemKernelExtensions.kc`（collection UUID
+`32F6A74A-0627-D0F9-6048-58AF2F562E12`）中的 `AMDRadeonX5000/X6000` fileset，
+不是从 Tahoe 偏移猜测。20 个 X6000 调用点中 16 个逐字节匹配，另外四个按当前
+函数边界重新核对：`setSuspendResumeState` 为 `0x28`，`writeDiagnosisReport`
+为 `0x52B/0x7AD/0x9C3`。Darwin 24 的第一个硬件 getter 去掉了 Tahoe 版本的
+`and 1`，因此使用独立的 ABI guard 表。
+
+这只是 kernel bridge candidate。`UserVideoDecode`、`UserSurfaceSync` 和
+ComputeScratch 仍保留 Darwin 25 门槛，用户态 cache 尚未迁移；因此它不等于硬解、
+Metal 或 WindowServer 稳定性证明，也没有部署到 USB。后续若要继续，必须以当前
+dyld cache UUID `42ec2890bc40317ebb2745142bff7f26` 重新生成并核验用户态补丁，
+再单独做 build-only sanitizer 回归。
+
 ## 实现
 
 X5000 加速器启动前请求可选加载 X6000；只有同步加载、两侧 hook 准备成功才接入
