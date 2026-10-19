@@ -46,7 +46,14 @@ HASHES = {
 }
 # 短 getter 需要至少 32 字节锚点；两个编码器的 pitch 函数完全相同，需要相邻完整函数区分。
 # 相邻函数仅参与完整匹配和重定位核验，不修改其字节。
-ENCODE_CONTEXTS = {}
+ENCODE_CONTEXTS = {
+    "__ZN14Vcn2EncCommand15getFeedbackSizeEv": (
+        "__ZN14Vcn2EncCommand20addSessionInitPacketEv", 36,
+        "30f2bdbaf54a9b10c7fe58119b8f288b5118bfa069bc062e01c15a7d248171d7"),
+    "__ZN11Vcn2Encoder15setEncodeParamsEPvP15VAVendorTexture": (
+        "__ZN11Vcn2Encoder18setAvcEncodeParamsEPv", 292,
+        "e7d4ca36567f06e784dda6aeb0238fa9947d04ec562518f28e8c98628e1bf1e7"),
+}
 
 
 def compile_payload(source, label):
@@ -142,11 +149,17 @@ def main():
 
         name = "__ZN17VAAcceleratorInfo8identifyEjj"
         address, original = function(name)
-        # Darwin 24.6 returns enum 11 for Renoir/Cezanne IDs. Change only the
-        # default five-byte immediate in the device-gated patch set; all native
-        # classification paths remain intact.
-        assert original[0x11:0x16] == bytes.fromhex("bb0b000000")
-        add(name, address + 0x11, original[0x11:0x16], bytes.fromhex("bb05000000"))
+        # Darwin 24.6 has no range entry for Renoir/Cezanne IDs; unmatched
+        # devices fall through to the final default `mov ebx,0xB` at +0x1B6.
+        # Return the VCN 2.2 family (5) there instead. The earlier +0x11 default
+        # only covers the helper-hit/arg!=1 path.
+        # _AVD_CreateAVDAccelerator's family gate needs NO patch: {0xB,0xC}
+        # take the release+return path, while every other family — including 5 —
+        # falls through `ja` into the real init path (object creation +
+        # initDriverCapability + result struct). Widening the gate would send
+        # family 5 to release+return and nullify this patch.
+        assert original[0x1B6:0x1BB] == bytes.fromhex("bb0b000000")
+        add(name, address + 0x1B6, original[0x1B6:0x1BB], bytes.fromhex("bb05000000"))
         for name, offset in [("__ZN9VAFactory20createGraphicsEngineEP9VAContext", 10),
                              ("__ZN9VAFactory14createImageBltEP9VAContextj", 11)]:
             address, code = function(name)
@@ -174,7 +187,27 @@ def main():
         name = "__ZN4Addr2V27Gfx9Lib20HwlConvertChipFamilyEjj"
         address, code = function(name)
         add(name, address, code, compile_payload((ROOT / "tools/video_addr_convert.s").read_text(), "addr-convert"))
-        # Encode-side patches are not part of this Darwin 24 decode candidate.
+        # 本机固件写入 48 字节反馈；原生 Vcn2 使用 164 字节，后续帧因此读到零或无关数据。
+        name = "__ZN14Vcn2EncCommand15getFeedbackSizeEv"
+        address, code = function(name)
+        assert code[4:9] == bytes.fromhex("b8a4000000")
+        add(name, address + 4, code[4:9], bytes.fromhex("b830000000"))
+        for name in [
+            "__ZN26AVDVcn2AvcEncDataProcessor19ProcessEncodeStatusEP19_VAEncodeStatusInfoPvP15VAVendorTexture",
+            "__ZN27AVDVcn2HevcEncDataProcessor19ProcessEncodeStatusEP19_VAEncodeStatusInfoPvP15VAVendorTexture",
+        ]:
+            address, code = function(name)
+            assert code[0x2A:0x31] == bytes.fromhex("4869c0a4000000")
+            add(name, address + 0x2A, code[0x2A:0x31], bytes.fromhex("4869c030000000"))
+        # 输入纹理的实际 pitch 可大于编码宽度；保留原生的字节到元素换算及半宽色度布局。
+        name = "__ZN11Vcn2Encoder15setEncodeParamsEPvP15VAVendorTexture"
+        address, code = function(name)
+        assert code[0x31:0x56] == bytes.fromhex(
+            "8b8a840000008b87240400000fafc105ff0000002500ffffff31d2f7f1894318d1e889431c")
+        pitch = compile_payload(".text\n.globl _payload\n_payload:\n"
+            "movl 0x80(%rdx), %eax\nmovl 0x84(%rdx), %ecx\nxorl %edx, %edx\ndivl %ecx\n"
+            "movl %eax, 0x18(%rbx)\nshrl %eax\nmovl %eax, 0x1c(%rbx)\n.org 37, 0x90\n", "encode-pitch")
+        add(name, address + 0x31, code[0x31:0x56], pitch)
         code_section = next(s for s in sections if s[0] == "__text")
         text = cache.read(code_section[1], code_section[2])
         for old, new in [(0x2220221, 0x2020201), (0x6660661, 0x6060601)]:

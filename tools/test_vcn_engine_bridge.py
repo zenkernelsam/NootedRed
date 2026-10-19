@@ -17,6 +17,7 @@ def main():
     stubs.mkdir(parents=True, exist_ok=True)
     (stubs / 'IOTypes.h').write_text('#pragma once\n#include <cstdint>\nusing UInt8=uint8_t;using UInt32=uint32_t;using UInt64=uint64_t;\n')
     vcn = (ROOT / 'NootedRed/VCN.cpp').read_text()
+    assert 'diagnosticBridge = darwin24 && !checkKernelArgument("-NRedVCNEnable");' in vcn
     functions = '\n'.join(function(vcn, prefix) for prefix in [
         'bool supported()', 'bool VCN::ready()', 'bool VCN::diagnosticOnly()', 'bool VCN::activate()',
         'bool  VCN::allocated()', 'void* VCN::allocateEngine()',
@@ -118,7 +119,7 @@ int main(){
         NRed::singleton().device=id;loadCompleted=has5000=has6000=hooks=true;
         assert(!VCN::ready()&&VCN::allocateEngine()==nullptr);
     }
-    // Darwin 24 is opt-in and diagnostic-only: the bridge may be ready, but it must not
+    // Darwin 24 defaults to diagnostic-only: the bridge may be ready, but it must not
     // allocate an engine, advertise VCN0, switch SML or substitute accelerator classes.
     NRed::singleton().device=0x1638; requested=true; darwin24=true; diagnosticBridge=true;
     kernelMajor=24; kernelMinor=6; loadCompleted=has5000=has6000=hooks=true; engineAllocated=false;
@@ -141,13 +142,26 @@ int main(){
         assert(safeCast(&newObject,&oldClass)==nullptr);
         assert(safeCast(&oldObject,&newClass)==nullptr);
     }
+    // Explicit -NRedVCNEnable clears the diagnostic gate. Exercise the enabled path
+    // separately: VCN0/engine allocation, generic SML selection, and work notification.
+    diagnosticBridge=false;engineAllocated=false;engine.object=&engineObject;
+    assert(VCN::ready()&&!VCN::diagnosticOnly()&&VCN::activate()&&!VCN::allocated());
+    assert(VCN::allocateEngine()==&engineObject&&VCN::allocated());
+    alignas(8) std::array<uint8_t,0x408> enabled{};
+    x.hasVCN0Field(enabled.data())=VCN::activate();
+    assert(x.allocateHWEngines(enabled.data()));
+    assert(x.hasVCN0Field(enabled.data()));
+    assert(getMember<void*>(enabled.data(),0x3F8)==&engineObject);
+    createSML(0x10001);assert(selected==6000&&configuration==0x10001);
+    notified=nativeSignals=0;signalWork(enabled.data());assert(notified==1&&nativeSignals==0);
+    engineAllocated=false;
     kernelMinor=5; assert(!VCN::ready());
     kernelMinor=6; darwin24=false; diagnosticBridge=false; assert(!VCN::ready());
     NRed::singleton().device=0x1638;
     for(bool* state:{&requested,&loadCompleted,&has5000,&has6000,&hooks}){
         *state=false;assert(!VCN::ready());*state=true;
     }
-    puts("PASS: four VCN2 engine slots, allocation failure, SML/cast/GFX gates and Darwin 24 diagnostic isolation");
+    puts("PASS: VCN2 engine slots, failure handling, GFX/SML/cast gates, and Darwin 24 diagnostic/enabled modes");
 }
 '''.replace('FUNCTIONS', functions).replace('ALLOCATION', allocation)
     util = WORK / "stubs/Headers"

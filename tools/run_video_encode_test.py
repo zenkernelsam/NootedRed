@@ -1,4 +1,4 @@
-"""用合成帧定位 VideoToolbox 编码失败阶段；硬件测试需显式启用，每项限时。"""
+"""用合成帧定位 VideoToolbox 编码/解码失败阶段；硬件路径需显式启用，每项限时。"""
 import argparse
 import datetime
 import json
@@ -8,9 +8,21 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def build_cases(args):
+    cases = [("list", ["--list"])]
+    modes = ["software"] + (["auto", "hardware"] if args.hardware else [])
+    cases += [(f"{mode}-{codec}", [f"--{mode}", codec]) for mode in modes for codec in ["h264", "hevc"]]
+    if args.hardware_decode:
+        cases = [(label, options if label == "list" else options + ["--hardware-decode"])
+                 for label, options in cases]
+    return cases
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--hardware", action="store_true", help="追加默认选择和强制硬件编码测试")
+    parser.add_argument("--hardware-decode", action="store_true",
+                        help="要求每个编码输出均由硬件解码，并核验 VideoToolbox 属性")
     parser.add_argument("--width", type=int, default=1280, help="偶数宽度，16–4096")
     parser.add_argument("--height", type=int, default=720, help="偶数高度，16–2160")
     parser.add_argument("--frames", type=int, default=3, help="完整编码和回读的帧数，1–120")
@@ -33,9 +45,7 @@ def main():
         "-framework", "CoreVideo", str(ROOT / "tools/test_video_encode.m"), "-o", str(executable),
     ], check=True, timeout=60)
     rows = []
-    cases = [("list", ["--list"])]
-    modes = ["software"] + (["auto", "hardware"] if args.hardware else [])
-    cases += [(f"{mode}-{codec}", [f"--{mode}", codec]) for mode in modes for codec in ["h264", "hevc"]]
+    cases = build_cases(args)
     for label, options in cases:
         print(f"BEGIN {label}", flush=True)
         with (work / f"{label}.jsonl").open("w") as output, (work / f"{label}.stderr.txt").open("w") as errors:

@@ -193,6 +193,7 @@ namespace
         if (size < 6 || slide > ~mach_vm_address_t{0} - size) { return false; }
         const auto* patches = darwin24 ? VCNKernelData::PatchesDarwin24 : VCNKernelData::Patches;
         constexpr auto patchCount = arrsize(VCNKernelData::Patches);
+        static_assert(arrsize(VCNKernelData::PatchesDarwin24) == patchCount);
         mach_vm_address_t addresses[patchCount]{};
         mach_vm_address_t signal{0};
         if (!resolve(patcher, id, "__ZN26AMDRadeonX6000_AMDHardware22signalGPUWorkSubmittedEv", signal, slide, size)) {

@@ -27,42 +27,64 @@
 使用 `-NRedVCN` 显式启用；保留已验证渲染基线的启动参数。
 默认关闭，未增加独显或其他 macOS 版本的支持。
 
-## Darwin 24.6 只读 ABI 校验（不是硬件激活候选）
+## Darwin 24.6 ABI 校验与显式实验激活
 
-当前 fork 保留一组 **macOS 15.8.1 / Darwin 24.6** 的 kernel patch 数据，必须同时
-使用 `-NRedVCN -NRedDarwin24` 才会选择。普通 `-NRedVCN` 仍走 Tahoe 数据；没有
-`-NRedDarwin24` 时 Darwin 24 继续拒绝，避免误把候选加载到其它 15.x 小版本。
+当前 fork 保留一组 **macOS 15.8.1 / Darwin 24.6** 的 kernel patch 与 ABI guard 数据。
+必须同时使用 `-NRedVCN -NRedDarwin24` 才选择该数据；Darwin 24 只接受 minor 6。
+普通 `-NRedVCN` 走 Tahoe/Darwin 25 数据，Darwin 24 若未显式请求 D24 仍会拒绝，
+避免把一组未经核验的偏移用于其它 15.x 小版本。
 
 该数据来自本机 Build 24.6 的 `SystemKernelExtensions.kc`（collection UUID
-`32F6A74A-0627-D0F9-6048-58AF2F562E12`）中的 `AMDRadeonX5000/X6000` fileset，
+`32F6A74A-0627-D0F9-6048-58AF2F562E12`，SHA-256
+`2296155f1f12471e7b774020ba70d9fb487d02224c1f85d373130511969c2243`）中的
+`AMDRadeonX5000/X6000` fileset，
 不是从 Tahoe 偏移猜测。20 个 X6000 调用点中 16 个逐字节匹配，另外四个按当前
 函数边界重新核对：`setSuspendResumeState` 为 `0x28`，`writeDiagnosisReport`
 为 `0x52B/0x7AD/0x9C3`。Darwin 24 的第一个硬件 getter 去掉了 Tahoe 版本的
 `and 1`，因此使用独立的 ABI guard 表。
 
-但在 Darwin 24 下这条路径**只做只读核验**：`processKext` 在两侧 ABI 通过后立即
-返回，不安装 X5000/X6000 hook、不写任何调用点、不分配 VCN 引擎、不设置
-`hasVCN0`、不替换 `AMDAccelShared`/`AMDAccelSharedUserClient`、不切换
-SML/`safeCast`，也不安装 `UserVideoDecode` 的 shared-region hook。因此
-`-NRedVCN -NRedDarwin24` 只发布诊断属性，不会在 VCN0 没有提交任何命令时改变
-GFX engine/channel setup。
+2026-10-19 对当前 24H32 KC 再做只读逐项核验：`PatchesDarwin24` 中 20 个
+X6000 patch record 的 symbol-relative 地址及原始 6 字节均与精确 pin 的
+`SystemKernelExtensions.kc` 匹配（20/20）。完整来源映射、fileset UUID/base/fileoff、
+SHA 和边界见 GPU_Rework `research/NOOTEDRED-D24-KERNEL-PATCH-VERIFY-2026-10-19.md`。
+同次对两个硬件虚表的 12 个 D24 ABI guards 解码 kernel-cache chained pointers 后，
+具名目标和完整 getter 字节也全部匹配（12/12）。这证明补丁/guard 数据匹配当前文件，
+不证明运行时已写入、编码通道经过这些调用点或 VT 硬件成功。
 
-原因是硬件激活会无条件改变共享加速器对象和 GFX 引擎数组；本机 `.gpuRestart`
+Darwin 24 默认保持 **diagnostic-only**：仅当没有 `-NRedVCNEnable` 时，
+`processKext` 在两侧 ABI 通过后立即返回，不安装 X5000/X6000 hook、不写调用点、
+不分配 VCN 引擎、不设置 `hasVCN0`、不替换 `AMDAccelShared`/
+`AMDAccelSharedUserClient`、不切换 SML/`safeCast`，也不安装
+`UserVideoDecode` shared-region hook。此默认组合是 `-NRedVCN -NRedDarwin24`。
+
+`-NRedVCN -NRedDarwin24 -NRedVCNEnable` 则显式越过诊断门，尝试启用 D24 桥接：
+ABI guard 通过后会安装 X5000/X6000 hook、加载原生 X6000 VCN 实现、创建 VCN engine、
+切换共享加速器/客户端路径，并允许用户态 VideoToolbox COW 补丁。该参数只代表用户
+明确选择实验激活，不代表引擎初始化或硬件编解码成功；它会改变 GFX/VCN 初始化路径，
+须在可回退的 USB 启动项中验证，不能将 diagnostic-only 的安全边界套用到 enabled 模式。
+
+保留 diagnostic-only 默认值，是因为硬件激活会改变共享加速器对象和 GFX 引擎数组；本机 `.gpuRestart`
 证据显示 stock release 4（没有 VCN 参数）同样在 QQ/Discord 的 GFX/compute 通道
 上 reset，且 reset 报告中 VCN0 为 `Disabled`、VCN 命令数为 0。VCN 不是该 GFX
-故障的唯一原因；在 X5000/X6000 共享类兼容性和基线 GFX/surface 问题未解决前，
-不应开放 Darwin 24 硬件激活。
+故障的唯一原因；这既不能证明启用 VCN 会修复这些 reset，也不能证明启用后无额外风险。
+因此 diagnostic-only 仍是默认；有明确回退路径时可通过 `-NRedVCNEnable` 做单独实验，
+并把 VCN 编解码验收与 GFX/surface 稳定性验收分开记录。
 
-当前 USB 实验参数保持 `-NRedVCN -NRedDarwin24`，但 kext 只验证 ABI。期望属性：
+纯 ABI 诊断启动使用 `-NRedVCN -NRedDarwin24`，且**不带** `-NRedVCNEnable`。期望属性：
 `NRedVCNDarwin24DiagnosticOnly=1`、`NRedVCNEngineAllocated=0`、
 `NRedVCNUserDiagnosticOnly=1`、两侧 `ABIValidated=1`、两侧 `Prepared=0`、
 `NativeLoadReady` 缺失或为 0。VCN0 不创建/不启动，用户态解码补丁不安装。这不等于硬解、
 Metal 或 WindowServer 稳定性证明。
 
+带 `-NRedVCNEnable` 的实验启动不应期待 `DiagnosticOnly=1` 或 `Prepared=0`；应按实际
+的 ABI、native-load、hook、engine、VCN channel 与 userland transaction 状态逐层记录。
+任何一个“prepared/allocated/applied”属性都只证明该层完成，不等于 VideoToolbox 硬件
+编码/解码成功。
+
 ## 实现
 
-以下引擎、通道、SML 和用户态接入只在 `VCN::activate()` 为真时执行；Darwin 24 的
-只读路径不会进入。Tahoe 行为保持不变。
+以下引擎、通道、SML 和用户态接入只在 `VCN::activate()` 为真时执行。Darwin 24 默认
+diagnostic-only 不会进入；明确附加 `-NRedVCNEnable` 后才尝试进入。Tahoe 行为保持不变。
 
 X5000 加速器启动前请求可选加载 X6000；只有同步加载、两侧 hook 准备成功才接入
 原生 VCN2 引擎、视频上下文与客户端。加载失败／延迟时不在既有实例中途启用。
@@ -117,6 +139,14 @@ ABI 回归编译实际核验函数，覆盖两侧所有槽位、getter 尾部变
 另执行 Debug、Research Release、Release 的构建与静态分析，
 并以 `tools/test_vcn_package_dependencies.py <构建后的 Info.plist>` 检查加载依赖。
 
+`tools/test_vcn_idle_calls.py` 需要先由 `tools/build_vcn_kernel_patch.py` 生成
+`build/vcn/kernel-patches.json`，该生成器依赖与它生成的 Tahoe `Patches` 表相匹配的
+x86_64 `AMDRadeonX5000/X6000` 文件系统二进制。在 macOS 15.8.1/24H32 Intel 上，
+这些二进制不以普通 `Contents/MacOS` 文件提供，且 `kmutil emit-macho` 不支持 Intel；
+因此该 native idle harness 在此环境尚未运行，不能算作 D24 回归通过。D24 当前已由
+GPU_Rework `research/verify_nootedred_d24_kernel_collection.py` 直接验证 20 个 patch
+原始字节和 12 个 ABI guard；该检查仍不等于实际 waitForIdle 运行时测试。
+
 ## 实机验收与限制
 
 既有 Cezanne `1638` 的正常尺寸 H.264／HEVC 短视频已观察到硬解与软件像素摘要一致；
@@ -139,7 +169,7 @@ Apple TV 在线观看的密钥请求及系统网络／音频 panic 需要独立�
 用户态的 1/2 仍表示符号缺失 / hook 失败。
 `NRedVCNKernelABIRejected=1` 表示桥接依赖的虚表或 getter 不符；
 `NRedVCNX5000ABIValidated` / `X6000ABIValidated` 表示对应驱动核验通过，不能代替真实硬解结果。
-Darwin 24 只读路径还应看到 `NRedVCNDarwin24DiagnosticOnly=1`、
+Darwin 24 diagnostic-only 启动还应看到 `NRedVCNDarwin24DiagnosticOnly=1`、
 `NRedVCNEngineAllocated=0`、两侧 `Prepared=0`、`NativeLoadReady` 缺失或为 0 和
 `NRedVCNUserDiagnosticOnly=1`；这些表示桥接已核验但未激活，不是失败。
 `NRedVCNEngineSkippedDiagnostic` 只在代码尝试分配引擎时出现，正常只读启动不会设置。
@@ -152,6 +182,10 @@ Darwin 24 只读路径还应看到 `NRedVCNDarwin24DiagnosticOnly=1`、
 `UserD04=1` 表示缓存不匹配，`UserD06=1` 表示代码不匹配；
 `UserEnabled` 只表示 hook 注册，不能作为硬解成功证据。
 
-验收使用 `-NRedVCN`，记录 CPU/PCI、`sw_vers`、`uname -r`、诊断字段及解码器的
-`UsingHardwareAcceleratedVideoDecoder` 属性，并对 H.264/HEVC 输出与软件解码做像素比较。
+Darwin 24 USB 实验验收使用 `-NRedVCN -NRedDarwin24 -NRedVCNEnable`，记录 kext UUID/SHA、
+CPU/PCI、`sw_vers`、`uname -r` 及逐层诊断字段；硬件编码须读取
+`UsingHardwareAcceleratedVideoEncoder`，硬件解码须要求硬件 decoder 并读取
+`UsingHardwareAcceleratedVideoDecoder`。H.264/HEVC 各自完整输出、像素检查且两项硬件
+属性均为 true 才算对应编解码通过。参数和方法层级状态不是硬件通过证据；当前 Barcelo
+Darwin 24 候选仍待 USB 实测。
 保留可启动的 EFI；发生异常时恢复旧 kext、移除 `-NRedVCN` 并重启。

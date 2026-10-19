@@ -1,6 +1,7 @@
 // 使用本地生成的 NV12 帧检查编码器选择和真实输出，不读取用户媒体。
 #import <Foundation/Foundation.h>
 #import <VideoToolbox/VideoToolbox.h>
+#import "videotoolbox_test_policy.h"
 #include <math.h>
 #include <stdatomic.h>
 #include <stdlib.h>
@@ -129,11 +130,13 @@ static void decoded(void *refcon, void *source, OSStatus status, VTDecodeInfoFla
     atomic_fetch_add(&state->frames, 1);
 }
 
-static NSDictionary *checkOutput(EncodeState *encodedState) {
+static NSDictionary *checkOutput(EncodeState *encodedState, BOOL requireHardwareDecoder) {
     DecodeState state = {0};
     VTDecompressionSessionRef session = NULL;
     OSStatus status = noErr;
-    NSDictionary *spec = @{(__bridge id)kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder: @NO};
+    NSDictionary *spec = requireHardwareDecoder
+        ? @{(__bridge id)kVTVideoDecoderSpecification_RequireHardwareAcceleratedVideoDecoder: @YES}
+        : @{(__bridge id)kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder: @NO};
     NSDictionary *attributes = @{
         (__bridge id)kCVPixelBufferPixelFormatTypeKey: @(kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)
     };
@@ -157,6 +160,21 @@ static NSDictionary *checkOutput(EncodeState *encodedState) {
         OSStatus finish = VTDecompressionSessionFinishDelayedFrames(session);
         OSStatus wait = VTDecompressionSessionWaitForAsynchronousFrames(session);
         if (status == noErr) status = finish != noErr ? finish : wait;
+    }
+    CFTypeRef hardwareValue = NULL;
+    OSStatus hardwarePropertyStatus = session
+        ? VTSessionCopyProperty(session, kVTDecompressionPropertyKey_UsingHardwareAcceleratedVideoDecoder,
+                                kCFAllocatorDefault, &hardwareValue)
+        : kVTVideoDecoderBadDataErr;
+    id usingHardware = hardwarePropertyStatus == noErr && hardwareValue
+        && CFGetTypeID(hardwareValue) == CFBooleanGetTypeID()
+        ? @(CFBooleanGetValue(hardwareValue)) : (id)[NSNull null];
+    BOOL decoderSelectionOK = NRedHardwareDecoderSelectionAccepted(requireHardwareDecoder, hardwarePropertyStatus,
+                                                                    hardwareValue);
+    if (hardwareValue) CFRelease(hardwareValue);
+    emit(@{@"stage": @"decoder-selection", @"requiredHardware": @(requireHardwareDecoder),
+           @"hardwarePropertyStatus": @(hardwarePropertyStatus), @"usingHardware": usingHardware});
+    if (session) {
         VTDecompressionSessionInvalidate(session);
         CFRelease(session);
     }
@@ -173,7 +191,10 @@ static NSDictionary *checkOutput(EncodeState *encodedState) {
              @"lumaErrorLimit": @10,
              @"chromaMeanAbsoluteError": chromaSamples ? @(meanChromaError) : (id)[NSNull null],
              @"chromaErrorLimit": @10,
-             @"passed": @(status == noErr && atomic_load(&state.error) == noErr && frames == FrameCount
+             @"requiredHardware": @(requireHardwareDecoder), @"hardwarePropertyStatus": @(hardwarePropertyStatus),
+             @"usingHardware": usingHardware,
+             @"passed": @(status == noErr && atomic_load(&state.error) == noErr && decoderSelectionOK
+                          && frames == FrameCount
                           && meanError <= 10 && meanChromaError <= 10)};
 }
 
@@ -213,10 +234,12 @@ int main(int argc, const char *argv[]) {
             if (list) CFRelease(list);
             return status == noErr ? 0 : 1;
         }
-        if (argc != 3 || (strcmp(argv[1], "--software") && strcmp(argv[1], "--auto")
+        BOOL requireHardwareDecoder = argc == 4 && strcmp(argv[3], "--hardware-decode") == 0;
+        if ((argc != 3 && !requireHardwareDecoder) || (argc == 4 && !requireHardwareDecoder)
+            || (strcmp(argv[1], "--software") && strcmp(argv[1], "--auto")
                          && strcmp(argv[1], "--hardware"))
             || (strcmp(argv[2], "h264") && strcmp(argv[2], "hevc"))) {
-            fprintf(stderr, "Usage: %s --list | --software|--auto|--hardware h264|hevc\n", argv[0]);
+            fprintf(stderr, "Usage: %s --list | --software|--auto|--hardware h264|hevc [--hardware-decode]\n", argv[0]);
             return 2;
         }
         NSString *mode = [NSString stringWithUTF8String:argv[1] + 2];
@@ -309,7 +332,7 @@ int main(int argc, const char *argv[]) {
             || ([mode isEqualToString:@"hardware"] && [hardware isEqual:@YES])
             || ([mode isEqualToString:@"software"] && ([hardware isEqual:@NO]
                 || (hardware == [NSNull null] && knownSoftware)));
-        NSDictionary *verified = checkOutput(&state);
+        NSDictionary *verified = checkOutput(&state, requireHardwareDecoder);
         BOOL passed = status == noErr && completeStatus == noErr && callbackError == noErr
             && submitted == frameCount && frames == frameCount && bytes > 0 && selectionOK
             && [verified[@"passed"] boolValue];

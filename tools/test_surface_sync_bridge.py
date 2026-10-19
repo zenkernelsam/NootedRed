@@ -1,5 +1,6 @@
 """编译实际内核桥接代码，覆盖多页拒绝、部分写入回滚和保护恢复。"""
 from pathlib import Path
+import argparse
 import re
 import subprocess
 
@@ -8,6 +9,9 @@ WORK = ROOT / "build/user-surface-sync/bridge"
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--sanitize', action='store_true')
+    args = parser.parse_args()
     source = (ROOT / "NootedRed/UserSurfaceSync.cpp").read_text()
     nred = (ROOT / "NootedRed/NRed.cpp").read_text().split("switch (this->deviceID)", 1)[1].split("default: PANIC", 1)[0]
     devices = {int(value, 16) for value in re.findall(r"case (0x[0-9A-Fa-f]+):", nred)}
@@ -169,7 +173,7 @@ scratchFlag=argc>1&&strcmp(argv[1],"--scratch")==0;candidateFlag=argc>1&&strcmp(
   if(other==active())continue;reset();size_t otherN=other==devicePatches->scratch?MaxN:(other==devicePatches->blend?3:2);
   for(size_t i=0;i<otherN;i++)memcpy(code[i].data(),other[i].patched,other[i].size);
   call();assert(protectCalls==0 && writeCalls==0);
-  assert(properties.contains("NRedImmediateSyncD06")||properties.contains("NRedImmediateSyncD08"));
+  assert(properties.contains("NRedImmediateSyncD04")||properties.contains("NRedImmediateSyncD06")||properties.contains("NRedImmediateSyncD07")||properties.contains("NRedImmediateSyncD08"));
  }
  reset();memcpy(code[0].data(),active()[0].patched,active()[0].size);call();assert(protectCalls==0 && properties.at("NRedImmediateSyncD08")==1);
  for(int mode=1;mode<=4;mode++){reset();regionMode=mode;call();assert(protectCalls==0);}
@@ -195,8 +199,9 @@ scratchFlag=argc>1&&strcmp(argv[1],"--scratch")==0;candidateFlag=argc>1&&strcmp(
 '''.replace("BODY", body).replace("INIT", init).replace("SUPPORTED_IDS", ",".join(map(str, sorted(devices)))).replace("properties.at(", "property(")
     file = WORK / "test-bridge.cpp"
     file.write_text(harness)
-    exe = WORK / "test-bridge"
-    subprocess.run(["clang++", "-std=c++23", "-O2", "-I", str(WORK / "stubs"), "-I", str(ROOT / "NootedRed"),
+    exe = WORK / ("test-bridge-sanitize" if args.sanitize else "test-bridge")
+    flags = ["-O1", "-g", "-fsanitize=address,undefined", "-fno-omit-frame-pointer"] if args.sanitize else ["-O2"]
+    subprocess.run(["clang++", "-std=c++23", *flags, "-I", str(WORK / "stubs"), "-I", str(ROOT / "NootedRed"),
                     str(file), "-o", str(exe)], check=True, timeout=60)
     for device in [0x15E7]:
         for mode in ["--immediate"]:
