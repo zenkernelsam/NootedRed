@@ -48,9 +48,15 @@ namespace UserMtlDualQuadData
         0xC5, 0xF8, 0x11, 0x87, 0x80, 0x00, 0x00};
     static_assert(sizeof(Context) == 112);
 
-    // 镜像 provenance（记录用）：站点 VA 位于
-    // /System/Library/Extensions/AMDRadeonX5000MTLDriver.bundle/.../AMDRadeonX5000MTLDriver
-    // 的 __TEXT 内（gfx9_HwInfoInitData 分支 A，仅该函数含此字节序列）。
-    // 身份链：cache UUID（整 build pin）+ offset + 112B 上下文窗 ≥ 单镜像 UUID 强度。
+    // 镜像 provenance：站点 VA 位于
+    // /System/Library/Extensions/AMDRadeonX5000MTLDriver.bundle/Contents/MacOS/AMDRadeonX5000MTLDriver
+    // __TEXT（镜像基址 VA 0x7FFB08757000，`gfx9_HwInfoInitData` 分支 A，字节序列唯一）。
+    // 该镜像 x86_64h LC_UUID 与 `dyld_info -uuid` 实测一致；
+    // GL 参照镜像 AMDRadeonX5000GLDriver UUID = BAD9208B-B99B-3DAA-AA51-15D199498873。
+    // 运行时门 = cache UUID（整 build pin）+ 固定 VA + 112B 上下文窗；
+    // ImageUUID 为证据级绑定（离线核验"站点页字节∈该镜像"），不是运行时附加条件。
+    inline constexpr UInt8 ImageUUID[] = {0x2F, 0x00, 0xBC, 0x70, 0xA1, 0x92, 0x30, 0xB3,
+                                          0xB6, 0x2D, 0x00, 0x39, 0xB8, 0xA8, 0xFC, 0xF3};
+    inline constexpr UInt64 ImageVA = 0x7FFB08757000ULL;
 
 }    // namespace UserMtlDualQuadData

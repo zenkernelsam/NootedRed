@@ -90,6 +90,52 @@ def main():
         if ctx_arr.count(b"\x83\xc9") != 1:
             failures.append("context contains second 83c9 site")
 
+        # 1d. 站点所属镜像 LC_UUID == 数据头 ImageUUID（dyld_info 实测 2F00BC70…）
+        img_arr = bytes(
+            int(x.strip(), 16)
+            for x in re.search(r"ImageUUID\[\] = \{([^}]+)\}", data_hpp).group(1).split(",")
+        )
+        found_uuid = None
+        for fh in files:
+            fh.seek(0)
+            hd = fh.read(104)
+            if not hd.startswith(b"dyld_v1"):
+                continue
+            moff, mcnt = struct.unpack_from("<II", hd, 16)
+            fh.seek(moff)
+            for i in range(mcnt):
+                a, sz, fo, _, _ = struct.unpack_from("<QQQII", fh.read(32))
+                if not (a <= SITE_VA < a + sz):
+                    continue
+                import mmap
+
+                mm = mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ)
+                pos = fo
+                fend = fo + sz
+                while True:
+                    pos = mm.find(b"\xcf\xfa\xed\xfe", pos, fend)
+                    if pos < 0:
+                        break
+                    ncmd = struct.unpack_from("<I", mm, pos + 16)[0]
+                    p, iu, tv, ts = pos + 32, None, 0, 0
+                    for _ in range(min(ncmd, 40)):
+                        if p + 8 > fend:
+                            break
+                        cmd, csz = struct.unpack_from("<II", mm, p)
+                        if csz < 8 or p + csz > fend:
+                            break
+                        if cmd == 0x1B:
+                            iu = mm[p + 8 : p + 24]
+                        if cmd == 0x19 and mm[p + 8 : p + 14] == b"__TEXT":
+                            tv, ts = struct.unpack_from("<QQ", mm, p + 24)
+                        p += csz
+                    if iu and tv <= SITE_VA < tv + ts:
+                        found_uuid = iu.hex()
+                        break
+                    pos += 4
+        if found_uuid != img_arr.hex():
+            failures.append(f"site image uuid {found_uuid} != ImageUUID {img_arr.hex()}")
+
         # 2. 站点原字节 = 83 c9 4d（分支 A or ecx,0x4d）
         site = read(SITE_VA, 3)
         if site != b"\x83\xc9\x4d":

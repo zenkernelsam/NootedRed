@@ -219,8 +219,10 @@ namespace MtlDQTxn
         }
         const bool writeOK = (written == spec.patchCount);
         if (!writeOK) {
+            // 回滚涵盖"已尝试"的全部补丁（含失败的那条——其写可能已部分落盘），
+            // 逐条检查回写结果；失败计数进 detail 高字节。
             uint32_t rollbackFail = 0;
-            for (uint32_t j = 0; j < written; ++j) {
+            for (uint32_t j = 0; j <= written; ++j) {
                 const auto& p = spec.patches[j];
                 if (env.write(env.u, saved[j], base + p.offset, p.size) != 0) { ++rollbackFail; }
             }
@@ -236,21 +238,28 @@ namespace MtlDQTxn
                 writable[q] = false;
                 continue;
             }
-            // 页仍 RW：尽力把落在该页上的补丁原字节写回，再重试。
+            // 页仍 RW：尽力把落在该页上的补丁原字节写回（每条必检），再重试 RX。
+            // 字节恢复失败 → 即使重试成功也记 unrecovered，绝不报 RestoreRecovered。
+            bool bytesOK = true;
             for (uint32_t j = 0; j < spec.patchCount; ++j) {
                 const auto& p  = spec.patches[j];
                 uint64_t    a0 = (base + p.offset) & ~(kPageSize - 1);
                 uint64_t    a1 = (base + p.offset + p.size - 1) & ~(kPageSize - 1);
                 if (pages[q] >= a0 && pages[q] <= a1) {
-                    env.write(env.u, saved[j], base + p.offset, p.size);
+                    if (env.write(env.u, saved[j], base + p.offset, p.size) != 0) { bytesOK = false; }
                 }
             }
             if (env.protSet(env.u, pages[q], ProtRX) == 0) {
                 writable[q] = false;
-                restoreFail = true;    // 救回了，但记录曾失败
+                restoreFail = true;    // 权限救回了，但记录曾失败
             }
             else {
                 r.unrecoveredMask |= 1U << q;
+                restoreFail = true;
+            }
+            if (!bytesOK) {
+                r.unrecoveredMask |= 1U << q;    // 字节未恢复 → unrecovered
+                r.detail |= 0x10000U << q;
                 restoreFail = true;
             }
         }

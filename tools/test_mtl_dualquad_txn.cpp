@@ -32,11 +32,20 @@ struct Sim
     int      failProtSetN{-1};      // 第 N 次 protSet 失败
     int      failProtSetSeq{-1};    // 第 N 次 protSet 失败（之后恢复）
     int      failWriteFrom{-1};     // 第 N 次起所有 write 失败
+    int      failWriteN2{-1};       // 第二个单点 write 失败
+    int      failWriteRangeLo{-1}, failWriteRangeHi{-1};  // write 序号区间全失败
+    int      wrongCtx{0};           // 回调见到非本 Sim 的 ctx 计数
+    Sim*     reenter{nullptr};      // protSet 首次调用时对另一 Sim 重入 apply
+    int      reenterDone{0};
 };
+
+static Spec crossSpec();
+static Env simEnv(Sim& s);
 
 static int sRead(void* u, uint64_t addr, void* buf, uint32_t n)
 {
     auto* s = static_cast<Sim*>(u);
+    if (u != s) { ++s->wrongCtx; }
     if (s->readCalls++ == s->failReadN) { return 1; }
     if (addr < s->shift || addr + n - s->shift > sizeof(s->mem)) { return 1; }
     memcpy(buf, s->mem + (addr - s->shift), n);
@@ -45,8 +54,14 @@ static int sRead(void* u, uint64_t addr, void* buf, uint32_t n)
 static int sWrite(void* u, const void* buf, uint64_t addr, uint32_t n)
 {
     auto* s   = static_cast<Sim*>(u);
+    if (u != s) { ++s->wrongCtx; }
     int   cur = s->writeCalls++;
-    if (cur == s->failWriteN || (s->failWriteFrom >= 0 && cur >= s->failWriteFrom)) { return 1; }
+    if (cur == s->failWriteN || cur == s->failWriteN2
+        || (s->failWriteFrom >= 0 && cur >= s->failWriteFrom)
+        || (s->failWriteRangeLo >= 0 && cur >= s->failWriteRangeLo && cur <= s->failWriteRangeHi))
+    {
+        return 1;
+    }
     if (addr < s->shift || addr + n - s->shift > sizeof(s->mem)) { return 1; }
     if (cur == s->partialWriteN) {
         s->mem[addr - s->shift] = static_cast<const uint8_t*>(buf)[0];
@@ -58,13 +73,21 @@ static int sWrite(void* u, const void* buf, uint64_t addr, uint32_t n)
 static int sQuery(void* u, uint64_t page, int32_t* out)
 {
     auto* s = static_cast<Sim*>(u);
+    if (u != s) { ++s->wrongCtx; }
     *out    = s->prot[(page - s->shift) / kPageSize];
     return 0;
 }
 static int sProtSet(void* u, uint64_t page, int32_t p)
 {
     auto* s   = static_cast<Sim*>(u);
+    if (u != s) { ++s->wrongCtx; }
     int   cur = s->protSetCalls++;
+    if (s->reenter != nullptr && !s->reenterDone) {
+        s->reenterDone = 1;
+        Sim* other   = s->reenter;
+        Env  otherE  = simEnv(*other);
+        apply(otherE, other->applyBase, crossSpec());
+    }
     if (cur == s->failProtSetN || cur == s->failProtSetSeq) { return 1; }
     s->prot[(page - s->shift) / kPageSize] = p;
     return 0;
@@ -308,6 +331,60 @@ int main()
         Env e  = simEnv(s);
         auto r = apply(e, s.applyBase, spec);
         CHECK(r.status == Status::NotRX, "not-rx");
+    }
+
+    // ---- ctx 隔离 + 重入交错：s1 事务中重入 s2 完整事务，互不串图 ----
+    {
+        Sim s1, s2;
+        auto cs = crossSpec();
+        initCrossSim(s1);
+        initCrossSim(s2);
+        Env e1       = simEnv(s1);
+        s1.reenter   = &s2;    // s1 首次 protSet 时跑完 s2 的整个 apply
+        auto r1      = apply(e1, s1.applyBase, cs);
+        CHECK(r1.status == Status::Applied, "reenter-s1-applied");
+        CHECK(s1.reenterDone == 1, "reenter-fired");
+        CHECK(s1.wrongCtx == 0 && s2.wrongCtx == 0, "reenter-ctx-isolated");
+        CHECK(memcmp(s1.mem + 0xFFE, kN0, 3) == 0 && memcmp(s2.mem + 0xFFE, kN0, 3) == 0,
+              "reenter-both-patched");
+        CHECK(s1.prot[0] == ProtRX && s2.prot[0] == ProtRX, "reenter-both-rx");
+    }
+    // ---- 失败补丁本身已部分落盘 → 回滚必须覆盖它（逐字节原样） ----
+    {
+        Sim s;
+        initCrossSim(s);
+        Env e           = simEnv(s);
+        s.partialWriteN = 1;    // patch1 写 1 字节后失败（0x01 覆盖原字节 0x04——原/修不同位）
+        auto r          = apply(e, s.applyBase, crossSpec());
+        CHECK(r.status == Status::WriteRolledBack, "partial-cross-rolledback");
+        CHECK(memcmp(s.mem + 0xFFE, kO0, sizeof(kO0)) == 0, "partial-cross-p0-orig");
+        CHECK(memcmp(s.mem + 0x1010, kO1, sizeof(kO1)) == 0, "partial-cross-p1-orig");
+        CHECK(s.prot[0] == ProtRX && s.prot[1] == ProtRX, "partial-cross-rx");
+    }
+    // ---- 写失败且失败补丁的回滚也失败 → WriteRollbackPartial ----
+    {
+        Sim s;
+        initCrossSim(s);
+        Env e               = simEnv(s);
+        s.failWriteN        = 1;    // patch1 写失败
+        s.failWriteN2       = 3;    // patch1 自身回滚写也失败（patch0 回滚成功）
+        auto r              = apply(e, s.applyBase, crossSpec());
+        CHECK(r.status == Status::WriteRollbackPartial, "rollback-partial-status");
+        CHECK((r.detail >> 8) == 1, "rollback-partial-count");
+        CHECK(memcmp(s.mem + 0xFFE, kO0, 3) == 0, "rollback-partial-p0-restored");
+    }
+    // ---- 字节恢复失败 + RX 重试成功 → 绝不 RestoreRecovered，记 unrecovered ----
+    {
+        Sim s;
+        initRealSim(s, false);
+        Env e            = simEnv(s);
+        s.failProtSetSeq = 1;     // 0=置RW ok，1=首次 RX 恢复失败
+        // 恢复路径的字节回写是第 1 次 write（0=补丁写成功，1=字节恢复写失败）
+        s.failWriteN     = 1;
+        auto r           = apply(e, s.applyBase, spec);
+        CHECK(r.status == Status::Unrecovered, "bytrec-unrecovered");
+        CHECK(r.unrecoveredMask & 1, "bytrec-mask");
+        CHECK((r.detail & 0x10000U) != 0, "bytrec-detail");
     }
 
     if (failures == 0) { printf("PASS: MtlDQTxn all transaction/failure-injection cases\n"); }

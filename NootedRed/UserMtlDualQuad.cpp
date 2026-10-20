@@ -34,7 +34,6 @@ namespace
     RegionRecurse     queryRegion{nullptr};
     CopyIn            readUser{nullptr};
     CopyOut           writeUser{nullptr};
-    vm_map_t          activeMap{nullptr};
     UInt32            seenStages{0}, appliedCount{0}, errorCount{0};
     constexpr auto    PatchCount = arrsize(UserMtlDualQuadData::Patches);
     static_assert(PatchCount <= MtlDQTxn::kMaxPatches);
@@ -86,7 +85,8 @@ namespace
         }
     }
 
-    // Env 绑定：read/write 走 _copyin/_copyout；protQuery 逐层下钻子映射到叶节点；
+    // Env 绑定：u = 本次调用的 vm_map_t（每调用独立 ctx，并发共享区检查互不串图）。
+    // read/write 走 _copyin/_copyout；protQuery 逐层下钻子映射到叶节点；
     // protSet 走 vm_protect（RWC=读|写|COPY，RX=读|执行）。
     int envRead(void*, uint64_t addr, void* buf, uint32_t n)
     {
@@ -96,8 +96,9 @@ namespace
     {
         return writeUser(buf, addr, n);
     }
-    int envProtQuery(void*, uint64_t page, int32_t* out)
+    int envProtQuery(void* u, uint64_t page, int32_t* out)
     {
+        const auto map = static_cast<vm_map_t>(u);
         natural_t depth{0};
         for (UInt32 attempt = 0; attempt < 8; ++attempt) {
             auto                            address = page;
@@ -105,7 +106,7 @@ namespace
             vm_region_submap_short_info_data_64_t info{};
             mach_msg_type_number_t count = VM_REGION_SUBMAP_SHORT_INFO_COUNT_64;
             const auto                      result = queryRegion(
-                activeMap, &address, &size, &depth, reinterpret_cast<vm_region_recurse_info_t>(&info), &count);
+                map, &address, &size, &depth, reinterpret_cast<vm_region_recurse_info_t>(&info), &count);
             if (result != KERN_SUCCESS) {
                 error(result);
                 return 1;
@@ -124,12 +125,13 @@ namespace
         }
         return 1;
     }
-    int envProtSet(void*, uint64_t page, int32_t prot)
+    int envProtSet(void* u, uint64_t page, int32_t prot)
     {
         const auto vprot = (prot == MtlDQTxn::ProtRWC)
             ? (VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY)
             : (VM_PROT_READ | VM_PROT_EXECUTE);
-        return vm_protect(activeMap, page, PAGE_SIZE, FALSE, vprot) == KERN_SUCCESS ? 0 : 1;
+        return vm_protect(static_cast<vm_map_t>(u), page, PAGE_SIZE, FALSE, vprot) == KERN_SUCCESS ? 0
+                                                                                                : 1;
     }
 
     int wrappedSharedRegionCheck(proc_t process, SharedRegionCheckArgs* args, int* returnValue)
@@ -165,14 +167,13 @@ namespace
             {Patches[0].offset, Patches[0].original, Patches[0].patched, Patches[0].size}};
         static const MtlDQTxn::Spec kSpec = {
             ContextOffset, Context, sizeof(Context), kPatches, PatchCount};
-        activeMap = getTaskMap(current_task());
-        if (activeMap == nullptr) {
+        vm_map_t map = getTaskMap(current_task());
+        if (map == nullptr) {
             stage(Stage::NoMap);
             return result;
         }
-        const MtlDQTxn::Env env = {nullptr, envRead, envWrite, envProtQuery, envProtSet};
+        const MtlDQTxn::Env env = {map, envRead, envWrite, envProtQuery, envProtSet};
         const auto          txn = MtlDQTxn::apply(env, base, kSpec);
-        activeMap               = nullptr;
         using S                 = MtlDQTxn::Status;
         switch (txn.status) {
             case S::Applied:
