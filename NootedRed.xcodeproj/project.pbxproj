@@ -119,6 +119,7 @@
 		EF0400060000000000000001 /* UserMtlDualQuad.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = UserMtlDualQuad.cpp; sourceTree = "<group>"; };
 		EF0400060000000000000002 /* UserMtlDualQuad.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = UserMtlDualQuad.hpp; sourceTree = "<group>"; };
 		EF0400060000000000000003 /* UserMtlDualQuadData.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = UserMtlDualQuadData.hpp; sourceTree = "<group>"; };
+		EF0400060000000000000004 /* UserMtlDualQuadTxn.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = UserMtlDualQuadTxn.hpp; sourceTree = "<group>"; };
 		EF0400020000000000000005 /* UserVideoDecode.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = UserVideoDecode.cpp; sourceTree = "<group>"; };
 		EF0400020000000000000004 /* VCNKernelData.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = VCNKernelData.hpp; sourceTree = "<group>"; };
 		EF0400020000000000000003 /* VCN.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = VCN.hpp; sourceTree = "<group>"; };
@@ -335,6 +336,7 @@
 				EF0400060000000000000001 /* UserMtlDualQuad.cpp */,
 				EF0400060000000000000002 /* UserMtlDualQuad.hpp */,
 				EF0400060000000000000003 /* UserMtlDualQuadData.hpp */,
+				EF0400060000000000000004 /* UserMtlDualQuadTxn.hpp */,
 				EF0400020000000000000004 /* VCNKernelData.hpp */,
 				EF0400020000000000000003 /* VCN.hpp */,
 				EF0400020000000000000002 /* VCN.cpp */,

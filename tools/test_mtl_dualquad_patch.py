@@ -64,6 +64,32 @@ def main():
         if uuid_arr.hex() != EXPECT_UUID:
             failures.append("header CacheUUID != pinned 24H32 uuid")
 
+        # 1b. 数据头 CacheMagic 与实际 dyld 头前 16 字节逐字节一致
+        files[0].seek(0)
+        real_magic = files[0].read(16)
+        magic_arr = bytes(
+            int(x.strip(), 16)
+            for x in re.search(r"CacheMagic\[\] = \{([^}]+)\}", data_hpp).group(1).split(",")
+        )
+        if magic_arr != real_magic:
+            failures.append(f"CacheMagic {magic_arr.hex()} != real header {real_magic.hex()}")
+
+        # 1c. 数据头 Context 窗口与实际缓存逐字节一致（站点字节也在窗内）
+        ctx_arr = bytes(
+            int(x.strip(), 16)
+            for x in re.search(r"Context\[\]      = \{([^}]+)\}", data_hpp).group(1).split(",")
+        )
+        ctx_off = int(re.search(r"ContextOffset  = 0x([0-9A-Fa-f]+)ULL", data_hpp).group(1), 16)
+        if ctx_off != SITE_VA - CACHE_BASE - 48:
+            failures.append(f"ContextOffset {ctx_off:#x} wrong")
+        if read(CACHE_BASE + ctx_off, len(ctx_arr)) != ctx_arr:
+            failures.append("Context window != pinned cache bytes")
+        site_idx = ctx_arr.find(b"\x83\xc9\x4d")
+        if site_idx != 48 or ctx_arr[48:51] != b"\x83\xc9\x4d":
+            failures.append("site position inside context wrong")
+        if ctx_arr.count(b"\x83\xc9") != 1:
+            failures.append("context contains second 83c9 site")
+
         # 2. 站点原字节 = 83 c9 4d（分支 A or ecx,0x4d）
         site = read(SITE_VA, 3)
         if site != b"\x83\xc9\x4d":
@@ -83,19 +109,31 @@ def main():
         if "Patched0[]  = {0x83, 0xC9, 0x4F}" not in data_hpp:
             failures.append("Patched0 bytes wrong")
 
-        # 5. 默认关门：仅 -NRedMtlDualQuad 启动；isRenoir + 15.x 门；mismatch no-op
+        # 5. 默认关门：仅 -NRedMtlDualQuad 启动；isRenoir + 15.x 门；mismatch no-op；
+        #    事务核（身份窗 + 已检查回滚 + 未恢复记录）走 UserMtlDualQuadTxn.hpp。
+        txn_hpp = (ROOT / "NootedRed/UserMtlDualQuadTxn.hpp").read_text()
         for needle in [
             'checkKernelArgument("-NRedMtlDualQuad")',
             "majorMatches(MACOS_15_X)",
             "isRenoir()",
-            "memcmp(header + 88, CacheUUID",
+            "MtlDQTxn::checkHeader",
+            "MtlDQTxn::apply",
             "Stage::CacheMismatch",
             "Stage::CodeMismatch",
-            "vm_protect(map, pages[p].address, PAGE_SIZE, FALSE, pages[p].protection)",
-            "writeUser(saved[j]",
+            "NRedMtlDQUnrecovered",
+            "UserMtlDualQuadTxn.hpp",
         ]:
             if needle not in module_cpp:
                 failures.append(f"module missing: {needle}")
+        for needle in [
+            "Status::Unrecovered",
+            "Status::WriteRollbackPartial",
+            "unrecoveredMask",
+            "env.protSet(env.u, pages[q], ProtRX)",
+            "env.write(env.u, saved[j]",
+        ]:
+            if needle not in txn_hpp:
+                failures.append(f"txn header missing: {needle}")
         if "UserMtlDualQuad::init(patcher)" not in nred_cpp:
             failures.append("NRed.cpp init call missing")
         for needle in ["UserMtlDualQuad.cpp in Sources", "UserMtlDualQuadData.hpp", "UserMtlDualQuad.hpp"]:
