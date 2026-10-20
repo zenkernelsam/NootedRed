@@ -34,9 +34,10 @@ struct Sim
     int      failWriteFrom{-1};     // 第 N 次起所有 write 失败
     int      failWriteN2{-1};       // 第二个单点 write 失败
     int      failWriteRangeLo{-1}, failWriteRangeHi{-1};  // write 序号区间全失败
-    int      wrongCtx{0};           // 回调见到非本 Sim 的 ctx 计数
     Sim*     reenter{nullptr};      // protSet 首次调用时对另一 Sim 重入 apply
     int      reenterDone{0};
+    uint64_t partialAddr{0};        // 最近一次 partial write 的目标地址
+    uint8_t  partialByte{0};        // 该次写落的字节值
 };
 
 static Spec crossSpec();
@@ -45,7 +46,6 @@ static Env simEnv(Sim& s);
 static int sRead(void* u, uint64_t addr, void* buf, uint32_t n)
 {
     auto* s = static_cast<Sim*>(u);
-    if (u != s) { ++s->wrongCtx; }
     if (s->readCalls++ == s->failReadN) { return 1; }
     if (addr < s->shift || addr + n - s->shift > sizeof(s->mem)) { return 1; }
     memcpy(buf, s->mem + (addr - s->shift), n);
@@ -54,7 +54,6 @@ static int sRead(void* u, uint64_t addr, void* buf, uint32_t n)
 static int sWrite(void* u, const void* buf, uint64_t addr, uint32_t n)
 {
     auto* s   = static_cast<Sim*>(u);
-    if (u != s) { ++s->wrongCtx; }
     int   cur = s->writeCalls++;
     if (cur == s->failWriteN || cur == s->failWriteN2
         || (s->failWriteFrom >= 0 && cur >= s->failWriteFrom)
@@ -64,7 +63,11 @@ static int sWrite(void* u, const void* buf, uint64_t addr, uint32_t n)
     }
     if (addr < s->shift || addr + n - s->shift > sizeof(s->mem)) { return 1; }
     if (cur == s->partialWriteN) {
-        s->mem[addr - s->shift] = static_cast<const uint8_t*>(buf)[0];
+        // 只写最后一字节：模拟 copyout 部分落盘且改动的是原/修不同位，
+        // 若回滚漏掉失败补丁，该字节会残留为 patched 值。
+        s->mem[addr - s->shift + n - 1] = static_cast<const uint8_t*>(buf)[n - 1];
+        s->partialAddr                = addr;
+        s->partialByte                = static_cast<const uint8_t*>(buf)[n - 1];
         return 1;
     }
     memcpy(s->mem + (addr - s->shift), buf, n);
@@ -73,14 +76,12 @@ static int sWrite(void* u, const void* buf, uint64_t addr, uint32_t n)
 static int sQuery(void* u, uint64_t page, int32_t* out)
 {
     auto* s = static_cast<Sim*>(u);
-    if (u != s) { ++s->wrongCtx; }
     *out    = s->prot[(page - s->shift) / kPageSize];
     return 0;
 }
 static int sProtSet(void* u, uint64_t page, int32_t p)
 {
     auto* s   = static_cast<Sim*>(u);
-    if (u != s) { ++s->wrongCtx; }
     int   cur = s->protSetCalls++;
     if (s->reenter != nullptr && !s->reenterDone) {
         s->reenterDone = 1;
@@ -344,7 +345,7 @@ int main()
         auto r1      = apply(e1, s1.applyBase, cs);
         CHECK(r1.status == Status::Applied, "reenter-s1-applied");
         CHECK(s1.reenterDone == 1, "reenter-fired");
-        CHECK(s1.wrongCtx == 0 && s2.wrongCtx == 0, "reenter-ctx-isolated");
+        // ctx 定向验证：把 s1 的 env.u 重定向到 s3，apply 必须只动 s3
         CHECK(memcmp(s1.mem + 0xFFE, kN0, 3) == 0 && memcmp(s2.mem + 0xFFE, kN0, 3) == 0,
               "reenter-both-patched");
         CHECK(s1.prot[0] == ProtRX && s2.prot[0] == ProtRX, "reenter-both-rx");
@@ -354,9 +355,11 @@ int main()
         Sim s;
         initCrossSim(s);
         Env e           = simEnv(s);
-        s.partialWriteN = 1;    // patch1 写 1 字节后失败（0x01 覆盖原字节 0x04——原/修不同位）
+        s.partialWriteN = 1;    // patch1 末字节 0x01 落盘后失败（原值 0x04——原/修不同位）
         auto r          = apply(e, s.applyBase, crossSpec());
         CHECK(r.status == Status::WriteRolledBack, "partial-cross-rolledback");
+        CHECK(s.partialAddr == s.applyBase + gP2[1].offset && s.partialByte == kN1[sizeof(kN1) - 1],
+              "partial-cross-mutation-evidence");
         CHECK(memcmp(s.mem + 0xFFE, kO0, sizeof(kO0)) == 0, "partial-cross-p0-orig");
         CHECK(memcmp(s.mem + 0x1010, kO1, sizeof(kO1)) == 0, "partial-cross-p1-orig");
         CHECK(s.prot[0] == ProtRX && s.prot[1] == ProtRX, "partial-cross-rx");
@@ -385,6 +388,21 @@ int main()
         CHECK(r.status == Status::Unrecovered, "bytrec-unrecovered");
         CHECK(r.unrecoveredMask & 1, "bytrec-mask");
         CHECK((r.detail & 0x10000U) != 0, "bytrec-detail");
+    }
+
+    // ---- ctx 定向：env.u 重定向到 s3 时，apply 必须只改 s3、不碰 s1 ----
+    {
+        Sim s1, s3;
+        auto cs = crossSpec();
+        initCrossSim(s1);
+        initCrossSim(s3);
+        Env e  = simEnv(s1);
+        e.u    = &s3;    // 模拟并发错位：s1 的 env 被指向 s3 的图
+        auto r = apply(e, s3.applyBase, cs);
+        CHECK(r.status == Status::Applied, "ctx-redirect-applied");
+        CHECK(memcmp(s3.mem + 0xFFE, kN0, 3) == 0, "ctx-redirect-s3-patched");
+        CHECK(memcmp(s1.mem + 0xFFE, kO0, 3) == 0, "ctx-redirect-s1-untouched");
+        CHECK(s1.writeCalls == 0 && s1.protSetCalls == 0, "ctx-redirect-s1-idle");
     }
 
     if (failures == 0) { printf("PASS: MtlDQTxn all transaction/failure-injection cases\n"); }
