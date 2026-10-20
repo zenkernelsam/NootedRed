@@ -9,8 +9,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from metal_cache import CACHE  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
-SITE_VA = 0x7FFB087EF53E
+# 条件式 dual-quad 修复的两处站点（AMD_render_cmd_encoder 管线建立段）：
+# P0 `75 0b -> eb 0b`（恒评估 dual-quad 条件）、P1 `0f 94 c0 -> 31 c0 90`（!RB+ 项置假）。
+SITES = [
+    (0x7FFB087B3164, b"\x75\x0b", b"\xeb\x0b"),
+    (0x7FFB087B3198, b"\x0f\x94\xc0", b"\x31\xc0\x90"),
+]
+SITE_VA = SITES[0][0]  # 镜像归属扫描用主站点
 CACHE_BASE = 0x7FF800000000
+CTX_OFF = 0x3087B3150
 EXPECT_UUID = "42ec2890bc40317ebb2745142bff7f26"
 
 
@@ -80,15 +87,17 @@ def main():
             for x in re.search(r"Context\[\]      = \{([^}]+)\}", data_hpp).group(1).split(",")
         )
         ctx_off = int(re.search(r"ContextOffset  = 0x([0-9A-Fa-f]+)ULL", data_hpp).group(1), 16)
-        if ctx_off != SITE_VA - CACHE_BASE - 48:
-            failures.append(f"ContextOffset {ctx_off:#x} wrong")
+        if ctx_off != CTX_OFF:
+            failures.append(f"ContextOffset {ctx_off:#x} != {CTX_OFF:#x}")
         if read(CACHE_BASE + ctx_off, len(ctx_arr)) != ctx_arr:
             failures.append("Context window != pinned cache bytes")
-        site_idx = ctx_arr.find(b"\x83\xc9\x4d")
-        if site_idx != 48 or ctx_arr[48:51] != b"\x83\xc9\x4d":
-            failures.append("site position inside context wrong")
-        if ctx_arr.count(b"\x83\xc9") != 1:
-            failures.append("context contains second 83c9 site")
+        # 两站点字节必须落在窗内 +0x14/+0x48 且原字节正确
+        for site_va, orig, _ in SITES:
+            idx = site_va - CACHE_BASE - ctx_off
+            if not (0 <= idx <= len(ctx_arr) - len(orig)):
+                failures.append(f"site {site_va:#x} outside context window")
+            elif ctx_arr[idx : idx + len(orig)] != orig:
+                failures.append(f"site {site_va:#x} bytes in context != original")
 
         # 1d. 站点所属镜像 LC_UUID == 数据头 ImageUUID（dyld_info 实测 2F00BC70…）
         img_arr = bytes(
@@ -136,24 +145,30 @@ def main():
         if found_uuid != img_arr.hex():
             failures.append(f"site image uuid {found_uuid} != ImageUUID {img_arr.hex()}")
 
-        # 2. 站点原字节 = 83 c9 4d（分支 A or ecx,0x4d）
-        site = read(SITE_VA, 3)
-        if site != b"\x83\xc9\x4d":
-            failures.append(f"site bytes {site.hex()} != 83c94d")
+        # 2. 各站点原字节与 pinned 缓存逐字节一致，且不跨页
+        for site_va, orig, _ in SITES:
+            if read(site_va, len(orig)) != orig:
+                failures.append(f"site {site_va:#x} bytes != {orig.hex()}")
+            if (site_va & 0xFFF) + len(orig) > 0x1000:
+                failures.append(f"patch at {site_va:#x} crosses page boundary")
+        if SITES[0][0] >> 12 != SITES[1][0] >> 12:
+            failures.append("sites not on the same page")
 
-        # 3. offset 数学 = VA - base，且站点不跨页
-        m = re.search(r"\{0x([0-9A-Fa-f]+)ULL, Original0, Patched0", data_hpp)
-        off = int(m.group(1), 16)
-        if off != SITE_VA - CACHE_BASE:
-            failures.append(f"offset {off:#x} != {SITE_VA - CACHE_BASE:#x}")
-        if (SITE_VA & 0xFFF) + 3 > 0x1000:
-            failures.append("patch crosses page boundary")
+        # 3. offset 数学 = VA - base
+        for i, (site_va, _, _) in enumerate(SITES):
+            m = re.search(r"\{0x([0-9A-Fa-f]+)ULL, Original%d," % i, data_hpp)
+            if not m or int(m.group(1), 16) != site_va - CACHE_BASE:
+                failures.append(f"Patches[{i}] offset wrong for {site_va:#x}")
 
         # 4. original/patched 字段与二进制一致
-        if "Original0[] = {0x83, 0xC9, 0x4D}" not in data_hpp:
-            failures.append("Original0 bytes wrong")
-        if "Patched0[]  = {0x83, 0xC9, 0x4F}" not in data_hpp:
-            failures.append("Patched0 bytes wrong")
+        for needle in [
+            "Original0[] = {0x75, 0x0B}",
+            "Patched0[]  = {0xEB, 0x0B}",
+            "Original1[] = {0x0F, 0x94, 0xC0}",
+            "Patched1[]  = {0x31, 0xC0, 0x90}",
+        ]:
+            if needle not in data_hpp:
+                failures.append(f"data missing: {needle}")
 
         # 5. 默认关门：仅 -NRedMtlDualQuad 启动；isRenoir + 15.x 门；mismatch no-op；
         #    事务核（身份窗 + 已检查回滚 + 未恢复记录）走 UserMtlDualQuadTxn.hpp。

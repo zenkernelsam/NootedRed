@@ -63,11 +63,16 @@ static int sWrite(void* u, const void* buf, uint64_t addr, uint32_t n)
     }
     if (addr < s->shift || addr + n - s->shift > sizeof(s->mem)) { return 1; }
     if (cur == s->partialWriteN) {
-        // 只写最后一字节：模拟 copyout 部分落盘且改动的是原/修不同位，
+        // 写第一个原/修不同字节：模拟 copyout 部分落盘且改动真实差异位，
         // 若回滚漏掉失败补丁，该字节会残留为 patched 值。
-        s->mem[addr - s->shift + n - 1] = static_cast<const uint8_t*>(buf)[n - 1];
-        s->partialAddr                = addr;
-        s->partialByte                = static_cast<const uint8_t*>(buf)[n - 1];
+        const auto* nb = static_cast<const uint8_t*>(buf);
+        uint32_t    k  = n - 1;
+        for (uint32_t i = 0; i < n; ++i) {
+            if (nb[i] != s->mem[addr - s->shift + i]) { k = i; break; }
+        }
+        s->mem[addr - s->shift + k] = nb[k];
+        s->partialAddr              = addr + k;
+        s->partialByte              = nb[k];
         return 1;
     }
     memcpy(s->mem + (addr - s->shift), buf, n);
@@ -98,29 +103,31 @@ static Env simEnv(Sim& s) { return {&s, sRead, sWrite, sQuery, sProtSet}; }
 // ---- 真实数据头 Spec：窗口铺到 mem[0x800]，applyBase 用真 cache base ----
 static Spec realSpec()
 {
-    static const Patch kP[] = {{UserMtlDualQuadData::Patches[0].offset,
-                                UserMtlDualQuadData::Patches[0].original,
-                                UserMtlDualQuadData::Patches[0].patched,
-                                UserMtlDualQuadData::Patches[0].size}};
+    static const Patch kP[] = {
+        {UserMtlDualQuadData::Patches[0].offset, UserMtlDualQuadData::Patches[0].original,
+         UserMtlDualQuadData::Patches[0].patched, UserMtlDualQuadData::Patches[0].size},
+        {UserMtlDualQuadData::Patches[1].offset, UserMtlDualQuadData::Patches[1].original,
+         UserMtlDualQuadData::Patches[1].patched, UserMtlDualQuadData::Patches[1].size}};
     return {UserMtlDualQuadData::ContextOffset, UserMtlDualQuadData::Context,
-            sizeof(UserMtlDualQuadData::Context), kP, 1};
+            sizeof(UserMtlDualQuadData::Context), kP, 2};
 }
 static void initRealSim(Sim& s, bool patchedSite)
 {
-    auto spec     = realSpec();
-    s.applyBase   = 0x7FF800000000ULL;
-    s.shift       = s.applyBase + spec.contextOffset - 0x800;
-    const auto site = spec.patches[0].offset - spec.contextOffset;
+    auto spec   = realSpec();
+    s.applyBase = 0x7FF800000000ULL;
+    s.shift     = s.applyBase + spec.contextOffset - 0x800;
     memcpy(s.mem + 0x800, spec.context, spec.contextSize);
-    memcpy(s.mem + 0x800 + site, patchedSite ? spec.patches[0].patched : spec.patches[0].original,
-           spec.patches[0].size);
-    const auto pageIdx = (s.applyBase + (spec.patches[0].offset & ~0xFFFULL) - s.shift) / kPageSize;
+    for (uint32_t i = 0; i < spec.patchCount; ++i) {
+        const auto site = spec.patches[i].offset - spec.contextOffset;
+        memcpy(s.mem + 0x800 + site,
+               patchedSite ? spec.patches[i].patched : spec.patches[i].original,
+               spec.patches[i].size);
+    }
     for (auto& p : s.prot) { p = ProtRX; }
-    s.prot[pageIdx] = ProtRX;
 }
-static size_t realMemIdx(const Spec& spec)
+static size_t realMemIdx(const Spec& spec, uint32_t i)
 {
-    return 0x800 + spec.patches[0].offset - spec.contextOffset;
+    return 0x800 + spec.patches[i].offset - spec.contextOffset;
 }
 
 // ---- 合成跨页 Spec：contextOffset=0xF40、size=0xE8；shift=applyBase ----
@@ -182,7 +189,11 @@ int main()
         Env e  = simEnv(s);
         auto r = apply(e, s.applyBase, spec);
         CHECK(r.status == Status::Applied, "apply-status");
-        CHECK(memcmp(s.mem + realMemIdx(spec), spec.patches[0].patched, 3) == 0, "apply-bytes");
+        CHECK(memcmp(s.mem + realMemIdx(spec, 0), spec.patches[0].patched,
+                     spec.patches[0].size) == 0
+                  && memcmp(s.mem + realMemIdx(spec, 1), spec.patches[1].patched,
+                            spec.patches[1].size) == 0,
+              "apply-bytes");
         CHECK(s.prot[((s.applyBase + (spec.patches[0].offset & ~0xFFFULL)) - s.shift) / kPageSize]
                   == ProtRX,
               "apply-rx");
@@ -202,7 +213,7 @@ int main()
     {
         Sim s;
         initRealSim(s, false);
-        s.mem[realMemIdx(spec)] = 0x90;
+        s.mem[realMemIdx(spec, 0)] = 0x90;
         Env e  = simEnv(s);
         auto r = apply(e, s.applyBase, spec);
         CHECK(r.status == Status::SiteUnknown, "site-unknown");
@@ -230,10 +241,13 @@ int main()
         Sim s;
         initRealSim(s, false);
         Env e         = simEnv(s);
-        s.failWriteN  = 0;    // 首个 write 即补丁写
+        s.failWriteN  = 0;    // 首个 write 即 patch0 补丁写
         auto r        = apply(e, s.applyBase, spec);
         CHECK(r.status == Status::WriteRolledBack, "write-fail-rolledback");
-        CHECK(memcmp(s.mem + realMemIdx(spec), spec.patches[0].original, 3) == 0,
+        CHECK(memcmp(s.mem + realMemIdx(spec, 0), spec.patches[0].original,
+                     spec.patches[0].size) == 0
+                  && memcmp(s.mem + realMemIdx(spec, 1), spec.patches[1].original,
+                            spec.patches[1].size) == 0,
               "write-fail-original");
         CHECK(s.prot[((s.applyBase + (spec.patches[0].offset & ~0xFFFULL)) - s.shift) / kPageSize]
                   == ProtRX,
@@ -242,11 +256,30 @@ int main()
     {
         Sim s;
         initRealSim(s, false);
+        Env e         = simEnv(s);
+        s.failWriteN  = 1;    // patch0 写成功、patch1 写失败 → 回滚两者
+        auto r        = apply(e, s.applyBase, spec);
+        CHECK(r.status == Status::WriteRolledBack, "write-fail1-rolledback");
+        CHECK(memcmp(s.mem + realMemIdx(spec, 0), spec.patches[0].original,
+                     spec.patches[0].size) == 0
+                  && memcmp(s.mem + realMemIdx(spec, 1), spec.patches[1].original,
+                            spec.patches[1].size) == 0,
+              "write-fail1-original");
+    }
+    {
+        Sim s;
+        initRealSim(s, false);
         Env e           = simEnv(s);
-        s.partialWriteN = 0;
+        s.partialWriteN = 0;    // patch0 差异字节(0x75->0xEB 的 idx0)落盘后失败
         auto r          = apply(e, s.applyBase, spec);
         CHECK(r.status == Status::WriteRolledBack, "partial-write-rolledback");
-        CHECK(memcmp(s.mem + realMemIdx(spec), spec.patches[0].original, 3) == 0,
+        CHECK(s.partialAddr == s.applyBase + spec.patches[0].offset
+                  && s.partialByte == spec.patches[0].patched[0],
+              "partial-write-mutation-evidence");
+        CHECK(memcmp(s.mem + realMemIdx(spec, 0), spec.patches[0].original,
+                     spec.patches[0].size) == 0
+                  && memcmp(s.mem + realMemIdx(spec, 1), spec.patches[1].original,
+                            spec.patches[1].size) == 0,
               "partial-write-original");
     }
     // ---- RX 恢复失败一次：字节还原 + 重试成功 → RestoreRecovered ----
@@ -261,7 +294,10 @@ int main()
         CHECK(s.prot[((s.applyBase + (spec.patches[0].offset & ~0xFFFULL)) - s.shift) / kPageSize]
                   == ProtRX,
               "restore-recovered-rx");
-        CHECK(memcmp(s.mem + realMemIdx(spec), spec.patches[0].original, 3) == 0,
+        CHECK(memcmp(s.mem + realMemIdx(spec, 0), spec.patches[0].original,
+                     spec.patches[0].size) == 0
+                  && memcmp(s.mem + realMemIdx(spec, 1), spec.patches[1].original,
+                            spec.patches[1].size) == 0,
               "restore-recovered-bytes");
     }
     // ---- RX 恢复永久失败 → Unrecovered + 页位 + 字节已还原 ----
@@ -277,7 +313,10 @@ int main()
         CHECK(s.prot[((s.applyBase + (spec.patches[0].offset & ~0xFFFULL)) - s.shift) / kPageSize]
                   == ProtRWC,
               "unrecovered-still-rw");
-        CHECK(memcmp(s.mem + realMemIdx(spec), spec.patches[0].original, 3) == 0,
+        CHECK(memcmp(s.mem + realMemIdx(spec, 0), spec.patches[0].original,
+                     spec.patches[0].size) == 0
+                  && memcmp(s.mem + realMemIdx(spec, 1), spec.patches[1].original,
+                            spec.patches[1].size) == 0,
               "unrecovered-bytes-restored");
     }
     // ---- 跨页多补丁 ----
@@ -358,7 +397,8 @@ int main()
         s.partialWriteN = 1;    // patch1 末字节 0x01 落盘后失败（原值 0x04——原/修不同位）
         auto r          = apply(e, s.applyBase, crossSpec());
         CHECK(r.status == Status::WriteRolledBack, "partial-cross-rolledback");
-        CHECK(s.partialAddr == s.applyBase + gP2[1].offset && s.partialByte == kN1[sizeof(kN1) - 1],
+        CHECK(s.partialAddr == s.applyBase + gP2[1].offset + sizeof(kN1) - 1
+                  && s.partialByte == kN1[sizeof(kN1) - 1],
               "partial-cross-mutation-evidence");
         CHECK(memcmp(s.mem + 0xFFE, kO0, sizeof(kO0)) == 0, "partial-cross-p0-orig");
         CHECK(memcmp(s.mem + 0x1010, kO1, sizeof(kO1)) == 0, "partial-cross-p1-orig");
@@ -382,8 +422,8 @@ int main()
         initRealSim(s, false);
         Env e            = simEnv(s);
         s.failProtSetSeq = 1;     // 0=置RW ok，1=首次 RX 恢复失败
-        // 恢复路径的字节回写是第 1 次 write（0=补丁写成功，1=字节恢复写失败）
-        s.failWriteN     = 1;
+        // 恢复路径的首条字节回写是第 2 次 write（0/1=两个补丁写成功，2=字节恢复写失败）
+        s.failWriteN     = 2;
         auto r           = apply(e, s.applyBase, spec);
         CHECK(r.status == Status::Unrecovered, "bytrec-unrecovered");
         CHECK(r.unrecoveredMask & 1, "bytrec-mask");

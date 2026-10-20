@@ -163,8 +163,10 @@ namespace
             stage(Stage::CacheMismatch);
             return result;
         }
+        static_assert(PatchCount == 2);
         static const MtlDQTxn::Patch kPatches[] = {
-            {Patches[0].offset, Patches[0].original, Patches[0].patched, Patches[0].size}};
+            {Patches[0].offset, Patches[0].original, Patches[0].patched, Patches[0].size},
+            {Patches[1].offset, Patches[1].original, Patches[1].patched, Patches[1].size}};
         static const MtlDQTxn::Spec kSpec = {
             ContextOffset, Context, sizeof(Context), kPatches, PatchCount};
         vm_map_t map = getTaskMap(current_task());
