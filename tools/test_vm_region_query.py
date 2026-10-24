@@ -1,5 +1,6 @@
 """使用真实 Mach API 验证两处权限查询；仅检查内存映射，不提交 GPU 工作。"""
 from pathlib import Path
+from user_patch_memory_harness import with_memory_helpers
 import subprocess
 
 from test_vcn_native_load import function
@@ -14,7 +15,7 @@ def main():
     for module in ["UserSurfaceSync", "UserVideoDecode"]:
         source = (ROOT / f"NootedRed/{module}.cpp").read_text()
         body = function(source, "bool leafProtection(")
-        helpers.append(body.replace("leafProtection", module + "Protection"))
+        helpers.append(body.replace("leafProtection", module + "Protection", 1))
     harness = r'''
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
@@ -25,6 +26,7 @@ def main():
 #include <cstdint>
 #include <initializer_list>
 using UInt32 = uint32_t;
+using UInt64 = uint64_t;
 static kern_return_t lastError = 0;
 static unsigned calls = 0;
 static void error(kern_return_t value) { lastError = value; }
@@ -81,7 +83,7 @@ int main() {
     assert(calls);
     puts("PASS: real short/full protection parity; shared cache, RW/R/NONE and unmapped addresses");
 }
-'''.replace("HELPERS", "\n".join(helpers))
+'''.replace("HELPERS", with_memory_helpers("\n".join(helpers)))
     cpp = WORK / "test-query.cpp"
     executable = WORK / "test-query"
     cpp.write_text(harness)

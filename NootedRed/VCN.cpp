@@ -9,6 +9,7 @@
 #include <VCN.hpp>
 #include <VCNCapabilities.hpp>
 #include <VCNKernelData.hpp>
+#include <VCNKernelProfiles.hpp>
 #include <libkern/OSKextLib.h>
 #include <libkern/c++/OSMetaClass.h>
 
@@ -18,7 +19,7 @@ namespace
     static const char*      path = "/System/Library/Extensions/AMDRadeonX6000.kext/Contents/MacOS/AMDRadeonX6000";
     KernelPatcher::KextInfo x6000{"com.apple.kext.AMDRadeonX6000",  &path, 1, {true}, {},
                                   KernelPatcher::KextInfo::Unloaded};
-    bool                    requested{false}, darwin24{false}, diagnosticBridge{false};
+    bool                    requested{false};
     bool                    has5000{false}, has6000{false}, hooks{false}, engineAllocated{false};
     bool                    loadAttempted{false}, loadCompleted{false};
     mach_vm_address_t       acceleratorStartOriginal{0};
@@ -44,7 +45,7 @@ namespace
 
     bool supported()
     {
-        return requested && VCNCapabilities::rejection(NRed::singleton().getDeviceID(), currentKernelVersion(), darwin24) == 0;
+        return requested && VCNCapabilities::rejection(NRed::singleton().getDeviceID(), currentKernelVersion()) == 0;
     }
 
     bool acceleratorStart(void* self, IOService* provider)
@@ -89,7 +90,7 @@ namespace
         using Cast                             = OSMetaClassBase* (*)(const OSMetaClassBase*, const OSMetaClass*);
         auto                          original = reinterpret_cast<Cast>(safeCastOriginal);
         auto*                         result   = original(object, target);
-        if (result || !object || !VCN::activate()) { return result; }
+        if (result || !object || !VCN::ready()) { return result; }
         for (const auto& pair : pairs) {
             const auto* alternative = target == pair.oldClass ? pair.newClass :
                                       target == pair.newClass ? pair.oldClass :
@@ -105,8 +106,8 @@ namespace
                          bool useDarwin24 = false)
     {
         if (size < 16 || slide > ~mach_vm_address_t{0} - size) { return false; }
-        const auto* guards = useDarwin24 ? (old ? VCNKernelData::GuardsDarwin24_5000 : VCNKernelData::GuardsDarwin24_6000)
-                                         : (old ? VCNKernelData::Guards5000 : VCNKernelData::Guards6000);
+        const auto* guards = VCNKernelProfiles::guards(currentKernelVersion().major(), old);
+        if (!guards) { return false; }
         static_assert(arrsize(VCNKernelData::Guards5000) == arrsize(VCNKernelData::Guards6000));
         mach_vm_address_t table{0};
         if (!resolve(patcher, id, old ? VCNKernelData::Table5000 : VCNKernelData::Table6000, table, slide, size)) {
@@ -166,7 +167,7 @@ namespace
     void* createSML(UInt32 configuration)
     {
         // GFX9 专用配置保留原生 GFX9 SML；其他配置使用含 VCN 描述的通用接口。
-        if (VCN::activate() && (configuration & 0xFFF8FFFFU) != 0) {
+        if (VCN::ready() && (configuration & 0xFFF8FFFFU) != 0) {
             // 原生 X6000 的宽松掩码会选择 GFX10；最低位只用于选择通用构造器，不传入构造器。
             return reinterpret_cast<void* (*)(UInt32)>(sml6000)(configuration | 1U);
         }
@@ -191,10 +192,10 @@ namespace
     bool install(KernelPatcher& patcher, size_t id, mach_vm_address_t slide, size_t size)
     {
         if (size < 6 || slide > ~mach_vm_address_t{0} - size) { return false; }
-        const auto* patches = darwin24 ? VCNKernelData::PatchesDarwin24 : VCNKernelData::Patches;
-        constexpr auto patchCount = arrsize(VCNKernelData::Patches);
-        static_assert(arrsize(VCNKernelData::PatchesDarwin24) == patchCount);
-        mach_vm_address_t addresses[patchCount]{};
+        size_t      patchCount{0};
+        const auto* patches = VCNKernelProfiles::patches(currentKernelVersion().major(), patchCount);
+        if (!patches || patchCount == 0 || patchCount > 32) { return false; }
+        mach_vm_address_t addresses[32]{};
         mach_vm_address_t signal{0};
         if (!resolve(patcher, id, "__ZN26AMDRadeonX6000_AMDHardware22signalGPUWorkSubmittedEv", signal, slide, size)) {
             return false;
@@ -204,6 +205,14 @@ namespace
             mach_vm_address_t function{0};
             if (!resolve(patcher, id, patch.symbol, function, slide, size)) { return false; }
             addresses[i] = function + patch.offset;
+            if (patch.newSlot == 0) {
+                const auto next = addresses[i] + 5;
+                if (next < addresses[i]
+                    || (signal >= next ? signal - next > 0x7FFFFFFFULL : next - signal > 0x80000000ULL))
+                {
+                    return false;
+                }
+            }
             if (function > ~mach_vm_address_t{0} - patch.offset || addresses[i] < slide
                 || addresses[i] > slide + size - sizeof(patch.original)
                 || memcmp(reinterpret_cast<void*>(addresses[i]), patch.original, sizeof(patch.original)))
@@ -252,27 +261,18 @@ namespace
 
 void VCN::init()
 {
-    requested = checkKernelArgument("-NRedVCN");
-    darwin24 = checkKernelArgument("-NRedDarwin24") && currentKernelVersion().majorMatches(MACOS_15_X)
-               && currentKernelVersion().minor() == 6;
-    // Darwin 24 only validates the bridge data. It must not allocate an engine,
-    // advertise VCN0 or replace any X5000 accelerator class for GFX clients.
-    // Default remains diagnostic-only; explicit opt-in re-enables the bridge.
-    diagnosticBridge = darwin24 && !checkKernelArgument("-NRedVCNEnable");
+    requested = checkKernelArgument("-NRedVideoFix") || checkKernelArgument("-NRedVCN");
     if (requested) { lilu.onKextLoadForce(&x6000); }
 }
 bool VCN::ready()
 {
     return supported() && __atomic_load_n(&loadCompleted, __ATOMIC_ACQUIRE) && has5000 && has6000 && hooks;
 }
-bool VCN::diagnosticOnly() { return diagnosticBridge; }
-bool VCN::activate() { return ready() && !diagnosticBridge; }
-bool  VCN::allocated() { return activate() && engineAllocated; }
+bool  VCN::allocated() { return ready() && engineAllocated; }
 void* VCN::allocateEngine()
 {
-    if (!activate()) {
+    if (!ready()) {
         NRed::singleton().setProp32("NRedVCNAllocationSkipped", requested);
-        if (diagnosticBridge) { NRed::singleton().setProp32("NRedVCNEngineSkippedDiagnostic", 1); }
         return nullptr;
     }
     auto* engine    = engineClass->alloc();
@@ -287,8 +287,7 @@ void VCN::processKext(KernelPatcher& patcher, size_t id, mach_vm_address_t slide
     if (!supported()) { return; }
     const auto old = id == kextRadeonX5000.loadIndex;
     if (!old && id != x6000.loadIndex) { return; }
-    if (darwin24) { NRed::singleton().setProp32("NRedVCNDarwin24Requested", 1); }
-    if (!verifyKernelABI(patcher, id, slide, size, old, darwin24)) {
+    if (!verifyKernelABI(patcher, id, slide, size, old)) {
         if (old) { has5000 = false; }
         else {
             has6000 = hooks = false;
@@ -300,14 +299,6 @@ void VCN::processKext(KernelPatcher& patcher, size_t id, mach_vm_address_t slide
         return;
     }
     NRed::singleton().setProp32(old ? "NRedVCNX5000ABIValidated" : "NRedVCNX6000ABIValidated", 1);
-    if (diagnosticBridge) {
-        // Read-only bridge: verify both sides, then leave every X5000/X6000 hook uninstalled.
-        NRed::singleton().setProp32("NRedVCNDarwin24DiagnosticOnly", 1);
-        NRed::singleton().setProp32("NRedVCNEngineAllocated", 0);
-        NRed::singleton().setProp32(old ? "NRedVCNX5000Prepared" : "NRedVCNX6000Prepared", 0);
-        SYSLOG("VCN", "%s Darwin 24 ABI verified; diagnostic-only, GFX untouched", old ? "X5000" : "X6000");
-        return;
-    }
     bool ok = true;
     for (size_t i = 0; i < arrsize(classes); ++i) {
         char name[112];

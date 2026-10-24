@@ -16,16 +16,17 @@
 代际依据 [Linux 内核 AMD 硬件组件表](https://www.kernel.org/doc/html/v6.17/gpu/amdgpu/amd-hardware-list-info.html)。
 同一视频代际是复用现有桥接的依据，不代表 Apple 驱动已经支持或新设备已经硬解成功。
 
-版本入口使用作者的 `KernelVersion::majorMatches(MACOS_26)`，接受 Tahoe 的 Darwin `25.x`，
-不限制内核小版本。VCN 启用前还必须通过已核实的内核 ABI：两侧硬件虚表的六个槽位
+版本入口允许 Darwin `23/24/25`，14/15 使用独立配置，具体缓存与限制见
+[多系统适配](macos-multi-os-compat.md)。VCN 启用前还必须通过已核实的内核 ABI：两侧硬件虚表的六个槽位
 分别核对具名方法身份或完整 getter 内容，包含 getter 访问的字段偏移；不兼容时不安装桥接。
 引擎写入复用 X5000 的 PM4 引擎数组基址与 `kAMDHWEngineTypeVCN0`，不另设 `0x3F8` 常量。
 这些检查验证当前桥接依赖的槽位与 getter，不能自动迁移任意新驱动布局。
 
-用户态保留参考 `x86_64h` 缓存 UUID 的静态快路径；其他 UUID 进入动态解析，
+Tahoe 用户态保留参考 `x86_64h` 缓存 UUID 的静态快路径；其他 UUID 进入动态解析，
 按映像路径、完整函数和实际相对引用生成补丁计划。具体约束见 [动态缓存匹配](user-cache-dynamic.md)。
-使用 `-NRedVCN` 显式启用；保留已验证渲染基线的启动参数。
-默认关闭，未增加独显或其他 macOS 版本的支持。
+使用 `-NRedVideoFix` 显式启用；显示修复另用 `-NRedDisplayFix`。
+完整组合见 [启动参数](boot-arguments.md)，旧 `-NRedVCN` 不再读取。
+默认关闭，未增加独显或其他视频代际的支持。
 
 ## Darwin 24.6 ABI 校验与显式实验激活
 
@@ -133,7 +134,7 @@ VA 回归对每份载荷穷举完整 16 位 PCI 空间，并验证 IOKit 失败�
 启动回归直接编译实际 capability gate，覆盖真实 provider 不符、加载延迟与失败。
 引擎回归编译实际 X5000 槽位写入、分配失败、跨驱动 cast 尺寸检查和 SML/GFX access 路由；
 COW 回归在四种设备上覆盖每个部分写入、保护失败、缓存与混合补丁拒绝及返回值保留。
-版本回归使用作者的真实版本类，覆盖不同 Tahoe 小版本及相邻系统主版本拒绝；
+版本回归使用作者的真实版本类，覆盖 Darwin 23/24/25 入口及范围外主版本拒绝；
 ABI 回归编译实际核验函数，覆盖两侧所有槽位、getter 尾部变化、方法不符和地址边界，含 ASan/UBSan。
 这些是 CPU 模拟，不能代替硬件初始化、视频码流与长期运行测试。
 另执行 Debug、Research Release、Release 的构建与静态分析，
@@ -165,7 +166,7 @@ Apple TV 在线观看的密钥请求及系统网络／音频 panic 需要独立�
 用 `ioreg -l -w0 -r -n IGPU | rg 'NRedVCN'` 读取诊断。
 `NRedVCNRequested=1`、`CapabilityVersion=2`、`DeviceID` 和 `Generation` 表示能力判定已执行；
 `Generation=0x0202` 表示 VCN 2.2，`0x0100` 只表示 VCN1 家族（不是精确的 IP 小版本）。
-`NRedVCNRejected` / `UserRejected` 的 3/4/5 分别表示设备未知、非 Tahoe、视频代际未实现；
+`NRedVCNRejected` / `UserRejected` 的 3/4/5 分别表示设备未知、系统未适配、视频代际未实现；
 用户态的 1/2 仍表示符号缺失 / hook 失败。
 `NRedVCNKernelABIRejected=1` 表示桥接依赖的虚表或 getter 不符；
 `NRedVCNX5000ABIValidated` / `X6000ABIValidated` 表示对应驱动核验通过，不能代替真实硬解结果。
@@ -182,10 +183,9 @@ Darwin 24 diagnostic-only 启动还应看到 `NRedVCNDarwin24DiagnosticOnly=1`�
 `UserD04=1` 表示缓存不匹配，`UserD06=1` 表示代码不匹配；
 `UserEnabled` 只表示 hook 注册，不能作为硬解成功证据。
 
-Darwin 24 USB 实验验收使用 `-NRedVCN -NRedDarwin24 -NRedVCNEnable`，记录 kext UUID/SHA、
-CPU/PCI、`sw_vers`、`uname -r` 及逐层诊断字段；硬件编码须读取
-`UsingHardwareAcceleratedVideoEncoder`，硬件解码须要求硬件 decoder 并读取
-`UsingHardwareAcceleratedVideoDecoder`。H.264/HEVC 各自完整输出、像素检查且两项硬件
-属性均为 true 才算对应编解码通过。参数和方法层级状态不是硬件通过证据；当前 Barcelo
-Darwin 24 候选仍待 USB 实测。
-保留可启动的 EFI；发生异常时恢复旧 kext、移除 `-NRedVCN` 并重启。
+验收使用 `-NRedVideoFix`（源码对旧 `-NRedVCN` 保留兼容识别；早期 `-NRedDarwin24`/`-NRedVCNEnable`
+opt-in 已被上游 profile 化多版本支持取代），记录 kext UUID/SHA、CPU/PCI、`sw_vers`、`uname -r`
+及逐层诊断字段；硬件编码须读取 `UsingHardwareAcceleratedVideoEncoder`，硬件解码须要求硬件
+decoder 并读取 `UsingHardwareAcceleratedVideoDecoder`。H.264/HEVC 各自完整输出、像素检查且
+两项硬件属性均为 true 才算对应编解码通过。参数和方法层级状态不是硬件通过证据。
+保留可启动的 EFI；发生异常时恢复旧 kext、移除 `-NRedVideoFix` 并重启。

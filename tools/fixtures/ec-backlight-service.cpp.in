@@ -1,0 +1,413 @@
+#include <cassert>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <map>
+#include <string>
+#include <thread>
+#include <vector>
+using UInt8                    = uint8_t;
+using UInt32                   = uint32_t;
+using UInt64                   = uint64_t;
+using SInt32                   = int32_t;
+using IOIndex                  = unsigned;
+using IOSelect                 = unsigned;
+using IOReturn                 = int;
+constexpr int kIOReturnSuccess = 0, kIOReturnUnsupported = -1, kIOReturnIOError = -2, kIOReturnBadArgument = -3;
+constexpr int kIOReturnNoDevice = -4, kIOReturnInternalError = -5, kIOReturnDeviceError = -6;
+#define OSDynamicCast(t, o) dynamic_cast<t*>(o)
+#define OSSafeReleaseNULL(p) \
+    do {                     \
+        if (p) {             \
+            (p)->release();  \
+            (p) = nullptr;   \
+        }                    \
+    }                        \
+    while (0)
+#define OSDeclareDefaultStructors(t) \
+public:                              \
+    t() = default;
+#define OSDefineMetaClassAndStructors(t, b)
+#define SYSLOG(...)        ((void)0)
+#define EXPORT             __attribute__((visibility("default")))
+#define FunctionCast(f, p) (p)
+unsigned                   live     = 0;
+bool                       inEcLoop = false, failLoop = false, failTimer = false, failAdd = false, failSchedule = false;
+std::map<std::string, int> bootArgs;
+bool                       PE_parse_boot_argn(const char* name, void* value, unsigned size)
+{
+    auto i = bootArgs.find(name);
+    if (i == bootArgs.end()) { return false; }
+    if (size == sizeof(bool)) { *static_cast<bool*>(value) = i->second != 0; }
+    else {
+        *static_cast<int*>(value) = i->second;
+    }
+    return true;
+}
+bool checkKernelArgument(const char* name) { return bootArgs.contains(name); }
+struct OSObject
+{
+    unsigned refs = 1;
+    OSObject() { ++live; }
+    virtual ~OSObject() { --live; }
+    void retain() { ++refs; }
+    void release()
+    {
+        assert(refs);
+        if (--refs == 0) { delete this; }
+    }
+};
+struct OSNumber : OSObject
+{
+    UInt64   value;
+    unsigned bits;
+    OSNumber(UInt64 v, unsigned b) :
+        value(v),
+        bits(b)
+    { }
+    static OSNumber* withNumber(UInt64 v, unsigned b) { return new OSNumber(v, b); }
+    UInt32           unsigned32BitValue() const { return value; }
+    UInt64           unsigned64BitValue() const { return value; }
+};
+struct OSData : OSObject
+{
+    std::vector<UInt8> bytes;
+    static OSData*     withBytes(const void* p, unsigned n)
+    {
+        auto       d = new OSData;
+        const auto b = static_cast<const UInt8*>(p);
+        d->bytes.assign(b, b + n);
+        return d;
+    }
+    unsigned    getLength() const { return bytes.size(); }
+    const void* getBytesNoCopy() const { return bytes.data(); }
+    const void* getBytesNoCopy(unsigned start, unsigned count) const
+    {
+        return start <= bytes.size() && count <= bytes.size() - start ? bytes.data() + start : nullptr;
+    }
+};
+struct IOWorkLoop;
+struct IOService : OSObject
+{
+    std::map<std::string, std::string> strings;
+    std::map<std::string, UInt64>      numbers;
+    virtual IOService*                 probe(IOService*, SInt32*) { return this; }
+    virtual bool                       start(IOService*) { return true; }
+    virtual void                       stop(IOService*) { }
+    virtual void                       free() { }
+    virtual IOWorkLoop*                getWorkLoop() const { return nullptr; }
+    void                               setProperty(const char* key, const char* value) { strings[key] = value; }
+    void                               setProperty(const char* key, UInt64 value, unsigned) { numbers[key] = value; }
+};
+struct IOTimerEventSource : OSObject
+{
+    using Action = void        (*)(OSObject*, IOTimerEventSource*);
+    OSObject*                  owner;
+    Action                     action;
+    bool                       armed = false, added = false;
+    static IOTimerEventSource* last;
+    static IOTimerEventSource* timerEventSource(OSObject* o, Action a)
+    {
+        if (failTimer) { return nullptr; }
+        auto t    = new IOTimerEventSource;
+        t->owner  = o;
+        t->action = a;
+        last      = t;
+        return t;
+    }
+    int setTimeoutMS(UInt32 ms)
+    {
+        assert(ms == 100);
+        if (failSchedule) { return -1; }
+        armed = true;
+        return 0;
+    }
+    void cancelTimeout() { armed = false; }
+    void fire()
+    {
+        assert(armed && added && !inEcLoop);
+        armed    = false;
+        inEcLoop = true;
+        action(owner, this);
+        inEcLoop = false;
+    }
+};
+IOTimerEventSource* IOTimerEventSource::last = nullptr;
+struct IOWorkLoop : OSObject
+{
+    static IOWorkLoop* workLoop() { return failLoop ? nullptr : new IOWorkLoop; }
+    int                addEventSource(IOTimerEventSource* t)
+    {
+        if (failAdd) { return -1; }
+        t->added = true;
+        return 0;
+    }
+    int removeEventSource(IOTimerEventSource* t)
+    {
+        assert(t->added);
+        t->added = false;
+        return 0;
+    }
+};
+struct IOACPIPlatformDevice : IOService
+{
+    UInt32   source = 2, maximum = 800, lastLevel = 264, setStatus = 0;
+    unsigned wdgCalls = 0, readCalls = 0, writes = 0, sourceWrites = 0;
+    bool     goodGuid = true, bufferOutput = false, shortOutput = false, emptyOutput = false, methodError = false;
+    int      evaluateObject(const char* name, OSObject** output, OSObject** params = nullptr, unsigned count = 0)
+    {
+        assert(inEcLoop);
+        *output = nullptr;
+        if (!strcmp(name, "_WDG")) {
+            ++wdgCalls;
+            assert(!params && !count);
+            UInt8 guid[20] = {0x13, 0x96, 0x3E, 0x60, 0x25, 0xEF, 0x38, 0x43, 0xA3, 0xD0,
+                              0xC4, 0x61, 0x77, 0x51, 0x6D, 0xB7, 'A',  'A',  1,    2};
+            if (!goodGuid) { guid[0] ^= 1; }
+            *output = OSData::withBytes(guid, 20);
+            return 0;
+        }
+        assert(!strcmp(name, "WMAA") && params && count == 3);
+        auto instance = dynamic_cast<OSNumber*>(params[0]);
+        auto method   = dynamic_cast<OSNumber*>(params[1]);
+        auto input    = dynamic_cast<OSData*>(params[2]);
+        assert(instance && method && input);
+        assert(instance->bits == 32 && instance->value == 0 && method->bits == 32 && input->getLength() == 24);
+        UInt32 args[6];
+        memcpy(args, input->getBytesNoCopy(), 24);
+        assert(args[2] == 0 && args[3] == 0 && args[4] == 0 && args[5] == 0);
+        UInt32 result = 0;
+        if (args[0] == 1) {
+            if (method->value == 1) {
+                ++writes;
+                lastLevel = args[1];
+            }
+            else {
+                assert(method->value == 2);
+                ++sourceWrites;
+                source = args[1];
+            }
+            result = setStatus;
+        }
+        else {
+            assert(args[1] == 0);
+            ++readCalls;
+            if (method->value == 2) {
+                assert(args[0] == 0);
+                result = source;
+            }
+            else {
+                assert(method->value == 1 && args[0] == 2);
+                result = maximum;
+            }
+        }
+        if (methodError) { return -1; }
+        if (emptyOutput) { return 0; }
+        if (bufferOutput || shortOutput) {
+            UInt32 words[3] = {0, 0, result};
+            *output         = OSData::withBytes(words, shortOutput ? 8 : 12);
+        }
+        else {
+            *output = new OSNumber(result, 32);
+        }
+        return 0;
+    }
+};
+SERVICE_HEADER
+SERVICE_SOURCE
+
+constexpr UInt32 kIOAppleBacklightAttribute = 1;
+unsigned         nativeSets = 0, nativeGets = 0, pwmSets = 0, auxSets = 0;
+int              originalSet(IOService*, IOIndex, IOSelect, uintptr_t)
+{
+    ++nativeSets;
+    return -17;
+}
+int originalGet(IOService*, IOIndex, IOSelect, uintptr_t* v)
+{
+    ++nativeGets;
+    if (v) { *v = 777; }
+    return -17;
+}
+bool pwm(void*, unsigned, unsigned)
+{
+    ++pwmSets;
+    return true;
+}
+bool aux(void*, bool, unsigned, unsigned)
+{
+    ++auxSets;
+    return true;
+}
+class Backlight
+{
+public:
+    UInt32                 curBacklightLvl = 500, maxBacklightLvl = 1000, maxBacklightMillinits = 512000;
+    bool                   supportsAUX                    = false;
+    void*                  embeddedPanelLink              = this;
+    decltype(&originalSet) orgSetAttributeForConnection   = originalSet;
+    decltype(&originalGet) orgGetAttributeForConnection   = originalGet;
+    decltype(&pwm)         orgDcLinkSetBacklightLevel     = pwm;
+    decltype(&aux)         orgDcLinkSetBacklightLevelNits = aux;
+    static Backlight&      singleton()
+    {
+        static Backlight b;
+        return b;
+    }
+    static IOReturn wrapSetAttributeForConnection(IOService*, IOIndex, IOSelect, uintptr_t);
+    static IOReturn wrapGetAttributeForConnection(IOService*, IOIndex, IOSelect, uintptr_t*);
+};
+SET_CALLBACK
+GET_CALLBACK
+
+int main()
+{
+    IOACPIPlatformDevice device;
+    SInt32               score = 0;
+    assert(!NRedECBacklight::hasBackend());
+    assert(NRedECBacklight::queue(10, 100) == kIOReturnUnsupported);
+    NRedECBacklight service;
+    assert(!service.probe(&device, &score));
+    for (int mode : {-1, 0, 3, 256, 257}) {
+        bootArgs = {{"NRedECFix", mode}};
+        assert(!service.probe(&device, &score));
+    }
+    bootArgs = {{"NRedECBacklight", 1}};
+    assert(!service.probe(&device, &score));
+    bootArgs = {{"NRedECFix", 1}, {"-NRedOff", 1}};
+    assert(!service.probe(&device, &score));
+    bootArgs = {{"NRedECFix", 1}, {"AMDBacklight", 0}};
+    assert(!service.probe(&device, &score));
+    bootArgs = {{"NRedECFix", 1}};
+    assert(service.probe(&device, &score) == &service);
+    assert(service.start(&device));
+    auto timer = IOTimerEventSource::last;
+    assert(device.wdgCalls == 0 && device.readCalls == 0 && device.writes == 0);
+    timer->fire();
+    assert(device.wdgCalls == 0 && device.readCalls == 0 && device.writes == 0);
+    NRedECBacklight::setDisplayReady(500, 1000);
+    timer->fire();
+    assert(NRedECBacklight::hasBackend() && service.strings["State"] == "ready");
+    assert(device.readCalls == 2 && device.writes == 0 && device.sourceWrites == 0);
+    // 读取或排队均不得同步进入 AMD、ACPI 或工作循环。
+    uintptr_t level = 0;
+    unsigned  reads = device.readCalls;
+    assert(Backlight::wrapGetAttributeForConnection(nullptr, 0, 1, &level) == 0 && level == 500);
+    assert(Backlight::wrapGetAttributeForConnection(nullptr, 0, 1, nullptr) == kIOReturnBadArgument);
+    assert(nativeGets == 0 && device.readCalls == reads);
+    assert(Backlight::wrapSetAttributeForConnection(nullptr, 0, 1, 700) == 0);
+    assert(nativeSets == 0 && pwmSets == 0 && auxSets == 0 && device.writes == 0);
+    timer->fire();
+    assert(device.writes == 1 && device.lastLevel == 560);
+    for (unsigned v : {100U, 300U, 800U}) { assert(Backlight::wrapSetAttributeForConnection(nullptr, 0, 1, v) == 0); }
+    assert(device.writes == 1);
+    timer->fire();
+    assert(device.writes == 2 && device.lastLevel == 640);
+    timer->fire();
+    assert(device.writes == 2 && device.readCalls == reads);
+    std::vector<std::thread> producers;
+    for (unsigned i = 0; i < 4; ++i) {
+        producers.emplace_back(
+            []
+            {
+                for (unsigned v = 1; v <= 1000; ++v) {
+                    assert(Backlight::wrapSetAttributeForConnection(nullptr, 0, 1, v) == 0);
+                    uintptr_t current = 0;
+                    assert(Backlight::wrapGetAttributeForConnection(nullptr, 0, 1, &current) == 0 && current <= 1000);
+                }
+            });
+    }
+    for (auto& thread : producers) { thread.join(); }
+    assert(NRedECBacklight::queue(1000, 1000) == 0);
+    timer->fire();
+    assert(device.lastLevel == 800);
+    unsigned beforeRepeat = device.writes;
+    // 同一亮度的新请求仍须执行，以便睡眠唤醒后恢复。
+    assert(NRedECBacklight::queue(1000, 1000) == 0);
+    timer->fire();
+    assert(device.writes == beforeRepeat + 1);
+    assert(NRedECBacklight::queue(1, UINT32_MAX) == 0);
+    timer->fire();
+    assert(device.lastLevel == 1);
+    assert(NRedECBacklight::queue(0, 0) == kIOReturnBadArgument);
+    assert(NRedECBacklight::queue(1001, 1000) == kIOReturnBadArgument);
+    assert(Backlight::wrapSetAttributeForConnection(nullptr, 0, 2, 900) == -17 && nativeSets == 1);
+    assert(Backlight::wrapGetAttributeForConnection(nullptr, 0, 2, &level) == -17 && nativeGets == 1);
+    // 同时匹配的其他服务不能抢占或清除当前后端。
+    {
+        IOACPIPlatformDevice other;
+        NRedECBacklight      duplicate;
+        assert(duplicate.probe(&other, &score) && duplicate.start(&other));
+        IOTimerEventSource::last->fire();
+        assert(other.readCalls == 0);
+        duplicate.stop(&other);
+        assert(other.refs == 1 && NRedECBacklight::hasBackend());
+    }
+    device.setStatus = 1;
+    assert(NRedECBacklight::queue(500, 1000) == 0);
+    timer->fire();
+    assert(service.strings["State"] == "faulted" && !timer->armed);
+    unsigned failedWrites = device.writes;
+    assert(Backlight::wrapSetAttributeForConnection(nullptr, 0, 1, 600) == kIOReturnIOError);
+    assert(device.writes == failedWrites && nativeSets == 1);
+    service.stop(&device);
+    service.free();
+    assert(device.refs == 1 && !NRedECBacklight::hasBackend());
+    assert(Backlight::wrapSetAttributeForConnection(nullptr, 0, 1, 600) == 0 && nativeSets == 2 && pwmSets == 1);
+    // 启动失败或不支持的 WMI 设备均需释放全部资源。
+    for (unsigned scenario = 0; scenario < 4; ++scenario) {
+        failLoop        = scenario == 0;
+        failTimer       = scenario == 1;
+        failAdd         = scenario == 2;
+        failSchedule    = scenario == 3;
+        unsigned before = live;
+        {
+            NRedECBacklight failed;
+            assert(failed.probe(&device, &score));
+            assert(!failed.start(&device));
+            failed.free();
+        }
+        assert(device.refs == 1 && live == before);
+    }
+    failLoop = failTimer = failAdd = failSchedule = false;
+    for (unsigned scenario = 0; scenario < 4; ++scenario) {
+        IOACPIPlatformDevice invalid;
+        invalid.goodGuid    = scenario != 0;
+        invalid.source      = scenario == 1 ? 1 : 2;
+        invalid.shortOutput = scenario == 2;
+        invalid.emptyOutput = scenario == 3;
+        NRedECBacklight rejected;
+        assert(rejected.probe(&invalid, &score) && rejected.start(&invalid));
+        IOTimerEventSource::last->fire();
+        assert(!NRedECBacklight::hasBackend());
+        rejected.stop(&invalid);
+        assert(invalid.refs == 1);
+    }
+    {
+        IOACPIPlatformDevice wide;
+        wide.maximum      = UINT32_MAX;
+        wide.bufferOutput = true;
+        NRedECBacklight wideService;
+        assert(wideService.probe(&wide, &score) && wideService.start(&wide));
+        auto t = IOTimerEventSource::last;
+        t->fire();
+        assert(NRedECBacklight::queue(UINT32_MAX, UINT32_MAX) == 0);
+        t->fire();
+        assert(wide.lastLevel == UINT32_MAX);
+        wideService.stop(&wide);
+    }
+    bootArgs = {{"NRedECFix", 2}};
+    {
+        IOACPIPlatformDevice forced;
+        forced.source = 1;
+        NRedECBacklight forcedService;
+        assert(forcedService.probe(&forced, &score) && forcedService.start(&forced));
+        IOTimerEventSource::last->fire();
+        assert(forced.sourceWrites == 1 && forced.writes == 0);
+        assert(NRedECBacklight::hasBackend());
+        forcedService.stop(&forced);
+    }
+    assert(live == 2);
+    puts("PASS: actual EC service lifecycle, workloop isolation, atomic queue, burst coalescing, AMD bypass, WMI "
+         "errors, cleanup, fallback");
+}

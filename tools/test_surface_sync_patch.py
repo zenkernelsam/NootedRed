@@ -62,7 +62,7 @@ int main(int argc,const char*[]){
  Executable c(old_override,sizeof(old_override),0x7ffb10d71affULL);
  // 参数可用于先确认旧函数确实不能满足目标修复条件。
  if(argc>1){uint8_t settings[128]{},info[180]{};put32(info,12,0x1638);
-  reinterpret_cast<Init>(a.p)(settings,info);assert((settings[3]&1)==0);return 0;}
+  reinterpret_cast<Init>(a.p)(settings,info);ORIGINAL_ASSERT;return 0;}
  uint32_t random=1;unsigned cases=0;
  for(uint32_t id:{0x1638U,0x15e7U,0x1636U,0x164cU,0x15d8U,0x15ddU,0x6860U,0xffff15e7U,0xffff1638U})for(unsigned i=0;i<2048;i++){
   alignas(16) std::array<uint8_t,128> left,right;std::array<uint8_t,180> info;
@@ -73,22 +73,27 @@ int main(int argc,const char*[]){
   overrideValue=i&1?(0x123456789abcde80ULL^(uint64_t(random)<<32)):0;
   calls=dumps=0;reinterpret_cast<Init>(a.p)(left.data(),info.data());assert(calls==1&&dumps==1);
   calls=dumps=0;reinterpret_cast<Init>(b.p)(right.data(),info.data());assert(calls==1&&dumps==1);
-  if(id==TARGET_DEVICE){left[3]&=0xfe;SHARED_MASK}assert(left==right);
+  if(id==TARGET_DEVICE){SYNC_MASK SHARED_MASK}assert(left==right);
   // 单独调用原生覆盖入口：包括配置显式开启 DCC 和 RSI 被调用者破坏的情况。
   calls=dumps=0;reinterpret_cast<Init>(c.p)(left.data(),info.data());assert(calls==1&&dumps==0);
   calls=dumps=0;reinterpret_cast<Init>(bridge+215)(right.data(),info.data());assert(calls==1&&dumps==0);
-  if(id==TARGET_DEVICE){left[3]&=0xfe;SHARED_MASK}assert(left==right);cases++;
+  if(id==TARGET_DEVICE){SYNC_MASK SHARED_MASK}assert(left==right);cases++;
  }
  // 穷举完整 PCI ID 空间，保证同进程中的其他 GPU 保留原生配置。
  for(uint32_t id=0;id<=0xffff;id++){
   uint8_t settings[128]{},info[180]{};put32(info,12,id);settings[3]=1;settings[8]=0x40;
   overrideMask=overrideValue=0;reinterpret_cast<Init>(bridge+215)(settings,info);
-  assert((settings[3]&1)==(id==TARGET_DEVICE?0:1));
+  SYNC_ASSERT
   SHARED_ASSERT
  }
  assert(munmap(bridge,4096)==0);printf("PASS: %u native init/override cases; only selected target sync/SRD placement bits change\n",cases);
 }
 '''.replace("ARRAYS", "\n".join(arrays)).replace("SHARED_MASK", "left[8]&=0xbf;" if shared_srd else "")
+    harness = harness.replace("SYNC_MASK", "" if shared_srd else "left[3]&=0xfe;")
+    harness = harness.replace("SYNC_ASSERT", "assert((settings[3]&1)==1);" if shared_srd else
+                              "assert((settings[3]&1)==(id==TARGET_DEVICE?0:1));")
+    harness = harness.replace("ORIGINAL_ASSERT", "assert((settings[8]&0x40)==0)" if shared_srd else
+                              "assert((settings[3]&1)==0)")
     harness = harness.replace("TARGET_DEVICE", hex(entry['device_id'])).replace(
         "SHARED_ASSERT", "assert((settings[8]&0x40)==(id==TARGET_DEVICE?0:0x40));".replace(
             "TARGET_DEVICE", hex(entry['device_id'])) if shared_srd else "assert(settings[8]==0x40);")
@@ -99,9 +104,10 @@ int main(int argc,const char*[]){
                     str(path), "-o", str(exe)], check=True, timeout=60)
     # 旧代码失败是预期；单独子进程验证，不降低新代码断言。
     result = subprocess.run([str(exe), "--original-must-fail"], capture_output=True, timeout=60)
-    if result.returncode == 0 or b"settings[3]" not in result.stderr:
-        raise AssertionError("旧实现未复现 延迟同步开启条件")
-    print("CONFIRMED: original initializer leaves deferred surface synchronization enabled")
+    expected = b"settings[8]" if shared_srd else b"settings[3]"
+    if result.returncode == 0 or expected not in result.stderr:
+        raise AssertionError("原生初始化未复现目标配置条件")
+    print("CONFIRMED: native initializer retains the target sync/SRD setting")
     subprocess.run([str(exe)], check=True, timeout=60)
 
 

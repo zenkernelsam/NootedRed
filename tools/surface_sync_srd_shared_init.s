@@ -1,4 +1,4 @@
-// 在立即同步底座上关闭目标核显的 SRD managed/VRAM 分配；PCI 比较值由生成器指定。
+// 关闭目标核显的 SRD managed/VRAM 分配，保留原生同步策略；PCI 比较值由生成器指定。
 .text
 .globl _surface_sync_init
 _surface_sync_init:
@@ -63,7 +63,6 @@ Loverride:
     popq %rsi
     cmpl $0x1638, 0xc(%rsi)
     jne Loverride_done
-    andb $0xfe, 3(%rbx)
     andb $0xbf, 8(%rbx)
 Loverride_done:
     popq %rbx

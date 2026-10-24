@@ -1,5 +1,6 @@
 """编译实际视频 COW 桥接代码，验证每个写入/保护失败、混合版本拒绝和返回值。"""
 from pathlib import Path
+from user_patch_memory_harness import with_memory_helpers
 import re
 import subprocess
 
@@ -12,6 +13,10 @@ def main():
     stub.mkdir(parents=True, exist_ok=True)
     (stub / "IOTypes.h").write_text("#pragma once\n#include <cstdint>\n"
                                  "using UInt8=uint8_t;using UInt32=uint32_t;using UInt64=uint64_t;\n")
+    (stub / "IOUserClient.h").write_text((ROOT / "tools/fixtures/fairplay-entitlement.hpp.in").read_text())
+    boolean = WORK / "stubs/libkern/c++"
+    boolean.mkdir(parents=True, exist_ok=True)
+    (boolean / "OSBoolean.h").write_text('#pragma once\n#include <IOKit/IOUserClient.h>\n')
     util = WORK / "stubs/Headers"
     util.mkdir(parents=True, exist_ok=True)
     (util / "kern_util.hpp").write_text('#pragma once\n#include <IOKit/IOTypes.h>\n')
@@ -20,6 +25,7 @@ def main():
     closing = re.search(r"\}\s*// namespace", source)
     assert namespace is not None and closing is not None
     body = source[namespace.end():closing.start()]
+    body = with_memory_helpers(body)
     init = source[source.index("void UserVideoDecode::init("):]
     template = (ROOT / "tools/fixtures/vcn-user-bridge.cpp.in").read_text()
     harness = WORK / "test-user-bridge.cpp"

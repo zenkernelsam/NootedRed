@@ -13,34 +13,36 @@ from cache_resolver_data import ResolverData
 
 ROOT = Path(__file__).resolve().parents[1]
 WORK = ROOT / "build/vcn"
-GVA_CHOICE_ADDRESS = 0x7FFA06692198
-GVA_CHOICE_SIZE = 1704
-GVA_CHOICE_SHA256 = "1836eb3109e90afac34824654063b2cab953dbb55903cb94f222850a1fa67523"
+GVA_CHOICE_ADDRESS = 0x7FFA0C59BBAC
+GVA_CHOICE_SIZE = 1136
+GVA_CHOICE_SHA256 = "b7c725552045a9db206ab2eed4edda7ea3d27a29de2feee782204c362764a33d"
 HASHES = {
-    "__ZN17VAAcceleratorInfo8identifyEjj": "dd95fd9d1ea9740465bcefa6d68770a0ebbb6e8161e97939be19ff1c1671737e",
+    "__ZN11VACPFactory8createCPEP11_VAHWConfigP11VAIOConnectPP4VACp":
+        "e63a2259ad470bd088d623edc778be34f9f6630fc6156bf6cac808c381b15aa6",
+    "__ZN17VAAcceleratorInfo8identifyEjj": "d7c579bce55c5724ec241f7f9abece9d0f23b1c30178d2f539fc0cabf41dc0bd",
     "__ZN18VAAddrLibInterface4initEP11VAIOConnectP13sHardwareInfo":
-        "abafc0170bb2bfa7c333371531e68cc01c237d6ddf4f297711f71c6f0773a264",
+        "b35bd96d6ca0b8bd9047af67fc3f0f77ef09242f684c65e17d4cee062af155ea",
     "__ZN4Addr2V27Gfx9Lib20HwlConvertChipFamilyEjj":
         "4a4a1d2337e580de8dcd851ec686179bc375639441ebf7020dcca69ea780f8fa",
     "__ZN4Addr3Lib6CreateEPK18_ADDR_CREATE_INPUTP19_ADDR_CREATE_OUTPUT":
-        "b0a123ffae9ff1b251077346fe12ba2640c007bdbb12ec15716855c5bf160063",
+        "b52b9103faa80681fff4d65758ac961b9a3263add45c7597ea7074e61e4fb685",
     "__ZN9VAFactory20createGraphicsEngineEP9VAContext":
-        "65ac04e1da1d0c5445de83db24583ffbfb29f2851928dc44cddb885c0d7846fc",
+        "0cca569382df5a722cd0a569536315566bc0351207ae7fe0cb1ae4cca67a1327",
     "__ZN9VAFactory14createImageBltEP9VAContextj":
-        "7052a8a0a8a73e5aac554bfd00a395e48a30af2de23587f0986710bd034cd2a2",
-    "__ZN9VAFactory17createDeblockerVPEi": "58fcd2efbaca0055df4e6dbb2bd54da7d6fc07e9beebbd216cb047eeb9c2271e",
-    "__ZN9VAFactory17createDitheringVPEi": "7bbd8395c27103ac3c5a7188fa79ef50b03c95cacf3dc6d5edee6fa8a7b9e72b",
-    "__ZN9VAFactory20createDeinterlacerVPEi": "3eeaf7d7db19379578209f019145ef116dc1526ee091b3e42e43255a07ac89ad",
+        "c5261154448c0030e75bf1e0f83a5152cb060d05857e317591b2a99ec18ab928",
+    "__ZN9VAFactory17createDeblockerVPEi": "c1ff92f8d8465dfbf165087549acb38a393c633ae8766bb668f93a36e9cf5f14",
+    "__ZN9VAFactory17createDitheringVPEi": "9655251548842be724c1dcd05f22d7dcf114a8923350fd69cef9ac3e7ec35a76",
+    "__ZN9VAFactory20createDeinterlacerVPEi": "eb331d24e2a37de70736a36082d565cf2a39b31e57eedb8e9faa47172598ab8d",
     "__ZN9VAFactory29createColourFormatConverterVPEi":
-        "8ed81834c8e63adc03f7714b2cf866a15db0d4ee444e6d8be66363cbb17369cd",
+        "5eb36cfc6c78526c1a3d4613cf55cb8d0f4c3a5967ecac16755b11d5ecdbac71",
     "__ZN9VAFactory31createDynamicContrastEnhancerVPEi":
-        "d9e9dc85b70ed7c1f9fa236ba967bfe7f5fee5aee3d3f9fb88a1b44b85fd184b",
+        "32d515a6ca3132d7fa258389d7bb109a3541508ee4814949e73fdd728f253dcd",
     "__ZN14Vcn2EncCommand15getFeedbackSizeEv":
         "571d3ec0d74000c103203b60450b43b67d758b74b470d0082d45879723021c7a",
     "__ZN26AVDVcn2AvcEncDataProcessor19ProcessEncodeStatusEP19_VAEncodeStatusInfoPvP15VAVendorTexture":
-        "fe78c5a8d4508c9a0eab2ba96830634b5f8f8a7982b06cd91c2bc1f6a1e2f493",
+        "d51bd9c906e803b9fc9b1b247a79f30059ebec4cfcb92f4492dfc1ed6fa21230",
     "__ZN27AVDVcn2HevcEncDataProcessor19ProcessEncodeStatusEP19_VAEncodeStatusInfoPvP15VAVendorTexture":
-        "0ff1d68ec316f8497278a3be223c2eabe642f68e894fa7ecc808e70168c5b2c2",
+        "1c3726a90b3e8f1d320700b05d3bf6cf9c7f49bd4afae0a2aac1cb44aaaaf038",
     "__ZN11Vcn2Encoder15setEncodeParamsEPvP15VAVendorTexture":
         "c8193ea2d2c7193012a5618b6918d41fffe30ad0c1389256fee983e66ac24347",
 }
@@ -49,10 +51,10 @@ HASHES = {
 ENCODE_CONTEXTS = {
     "__ZN14Vcn2EncCommand15getFeedbackSizeEv": (
         "__ZN14Vcn2EncCommand20addSessionInitPacketEv", 36,
-        "30f2bdbaf54a9b10c7fe58119b8f288b5118bfa069bc062e01c15a7d248171d7"),
+        "053f7d73eba9f63f788d33260cea0e3a81e0850b62795d165948349bf15fc5d0"),
     "__ZN11Vcn2Encoder15setEncodeParamsEPvP15VAVendorTexture": (
         "__ZN11Vcn2Encoder18setAvcEncodeParamsEPv", 292,
-        "e7d4ca36567f06e784dda6aeb0238fa9947d04ec562518f28e8c98628e1bf1e7"),
+        "f1a48a1a06df4907da861452b1339311d836e1dde21167e6d15b0dfa9204ab3d"),
 }
 
 
@@ -135,36 +137,31 @@ def main():
             full_functions[name] = (address, context)
             return address, code
 
-        def add(name, address, original, patched):
+        def add(name, address, original, patched, *, fairplay_decode=False):
             if len(original) != len(patched):
                 raise ValueError("补丁长度不相等")
-            records.append({"label": name, "address": address, "original": original.hex(), "patched": patched.hex()})
+            records.append({"label": name, "address": address, "original": original.hex(), "patched": patched.hex(),
+                            "fairplayDecode": fairplay_decode})
 
-        # Build 24.6 has a different board-id path from the historical
-        # MacBook-only fallback. Profile the selector, but do not patch it until
-        # a board-specific current branch is proven.
         gva_choice = cache.read(GVA_CHOICE_ADDRESS, GVA_CHOICE_SIZE)
         if hashlib.sha256(gva_choice).hexdigest() != GVA_CHOICE_SHA256:
             raise ValueError("AppleGVA 选择函数未核实，拒绝生成")
+        assert gva_choice[0x287:0x28D] == bytes.fromhex("0f84ac010000")
+        # 非专用 AMD 机型的原生回退只选择 Intel；无 Intel 时跳到已有的 AMD 插入路径。
+        # 此前已检查至少存在一个可用 GPU，因此该出口必有 AMD，其他选择与显式请求不变。
+        add("AppleGVA_AMDOnlyFallback", GVA_CHOICE_ADDRESS + 0x287,
+            gva_choice[0x287:0x28D], bytes.fromhex("0f842a000000"))
 
         name = "__ZN17VAAcceleratorInfo8identifyEjj"
         address, original = function(name)
-        # Darwin 24.6 has no range entry for Renoir/Cezanne IDs; unmatched
-        # devices fall through to the final default `mov ebx,0xB` at +0x1B6.
-        # Return the VCN 2.2 family (5) there instead. The earlier +0x11 default
-        # only covers the helper-hit/arg!=1 path.
-        # _AVD_CreateAVDAccelerator's family gate needs NO patch: {0xB,0xC}
-        # take the release+return path, while every other family — including 5 —
-        # falls through `ja` into the real init path (object creation +
-        # initDriverCapability + result struct). Widening the gate would send
-        # family 5 to release+return and nullify this patch.
-        assert original[0x1B6:0x1BB] == bytes.fromhex("bb0b000000")
-        add(name, address + 0x1B6, original[0x1B6:0x1BB], bytes.fromhex("bb05000000"))
+        identify_variants = {device: identify_payload(original, device, family) for device, family in capabilities}
+        add(name, address, original, identify_variants[0x1638], fairplay_decode=True)
         for name, offset in [("__ZN9VAFactory20createGraphicsEngineEP9VAContext", 10),
                              ("__ZN9VAFactory14createImageBltEP9VAContextj", 11)]:
             address, code = function(name)
             assert code[offset:offset + 10] == bytes.fromhex("488b86600400008b400c")
-            add(name, address + offset, code[offset:offset + 10], bytes.fromhex("b8020000009090909090"))
+            add(name, address + offset, code[offset:offset + 10], bytes.fromhex("b8020000009090909090"),
+                fairplay_decode=True)
         for name in HASHES:
             if "VPEi" not in name:
                 continue
@@ -175,18 +172,24 @@ def main():
             assert code[offset + 7] < 0x80
             target = offset + 8 + code[offset + 7]
             patched = b"\xbe\x02\x00\x00\x00\xeb" + bytes([target - offset - 7]) + b"\x90"
-            add(name, address + offset, code[offset:offset + 8], patched)
+            add(name, address + offset, code[offset:offset + 8], patched, fairplay_decode=True)
         name = "__ZN18VAAddrLibInterface4initEP11VAIOConnectP13sHardwareInfo"
         address, code = function(name)
         assert code[0x8B:0x92] == bytes.fromhex("4181fc8d000000")
-        add(name, address + 0x8E, b"\x8d", b"\x8e")
+        add(name, address + 0x8E, b"\x8d", b"\x8e", fairplay_decode=True)
+        name = "__ZN11VACPFactory8createCPEP11_VAHWConfigP11VAIOConnectPP4VACp"
+        address, code = function(name)
+        assert code[0x3F:0x44] == bytes.fromhex("83f9047317")
+        # APU 识别复用 VCN2 枚举 5；内容保护工厂需承接到已有 PSP 实现。
+        add(name, address + 0x41, b"\x04", b"\x05", fairplay_decode=True)
         name = "__ZN4Addr3Lib6CreateEPK18_ADDR_CREATE_INPUTP19_ADDR_CREATE_OUTPUT"
         address, code = function(name)
         assert code[0xB5:0xBA] == bytes.fromhex("3d8d000000")
-        add(name, address + 0xB6, b"\x8d", b"\x8e")
+        add(name, address + 0xB6, b"\x8d", b"\x8e", fairplay_decode=True)
         name = "__ZN4Addr2V27Gfx9Lib20HwlConvertChipFamilyEjj"
         address, code = function(name)
-        add(name, address, code, compile_payload((ROOT / "tools/video_addr_convert.s").read_text(), "addr-convert"))
+        add(name, address, code, compile_payload((ROOT / "tools/video_addr_convert.s").read_text(), "addr-convert"),
+            fairplay_decode=True)
         # 本机固件写入 48 字节反馈；原生 Vcn2 使用 164 字节，后续帧因此读到零或无关数据。
         name = "__ZN14Vcn2EncCommand15getFeedbackSizeEv"
         address, code = function(name)
@@ -218,14 +221,23 @@ def main():
                 if not any(s in parent[1] for s in ["HwlGetPreferredSurfaceSetting", "HwlComputeSurfaceInfoSanityCheck",
                                                    "IsValidDisplaySwizzleMode", "ValidateSwModeParams"]):
                     raise ValueError("swizzle mask 位于未核实的消费者")
-                add(parent[1], address, struct.pack("<I", old), struct.pack("<I", new))
+                add(parent[1], address, struct.pack("<I", old), struct.pack("<I", new), fairplay_decode=True)
                 count += 1
                 cursor = offset + 1
             if count != 4:
                 raise ValueError("swizzle mask 数量不匹配")
         records.sort(key=lambda r: r["address"])
+        # 掩码随排序后的记录生成；只允许显式标记的 AMD 解码项，AppleGVA 与编码项不进入候选。
+        if len(records) > 32:
+            raise ValueError("FairPlay 解码掩码超出 UInt32")
+        decode_mask = 0
+        for i, record in enumerate(records):
+            if record["fairplayDecode"]:
+                if not code_section[1] <= record["address"] < code_section[1] + code_section[2]:
+                    raise ValueError("FairPlay 解码项不属于 AMD 驱动代码段")
+                decode_mask |= 1 << i
         resolver = ResolverData(cache, WORK)
-        functions = {**full_functions}
+        functions = {"AppleGVA_AMDOnlyFallback": (GVA_CHOICE_ADDRESS, gva_choice), **full_functions}
         for record in records:
             label = record["label"]
             if label not in functions:
@@ -261,14 +273,29 @@ def main():
             header += f'    {{0x{record["address"] - cache.base:X}ULL, Original{i}, Patched{i}, sizeof(Original{i})}},\n'
         pages = len({r["address"] // 4096 for r in records})
         header += "};\n"
+        header += f"inline constexpr UInt32 FairPlayDecodeMask = 0x{decode_mask:X}U;\n"
+        identify_index = next(i for i, record in enumerate(records) if record['label'] == '__ZN17VAAcceleratorInfo8identifyEjj')
         device_records = []
         for device, _ in capabilities:
             variants = [dict(record) for record in records]
+            variants[identify_index]['patched'] = identify_variants[device].hex()
             device_records.append({'device_id': device, 'records': variants})
+            if device == 0x1638:
+                continue
+            suffix = f'{device:04X}'
+            header += array(f'Identify{suffix}', identify_variants[device])
+            header += f'inline constexpr Patch Patches{suffix}[] = {{\n'
+            for i in range(len(records)):
+                if i == identify_index:
+                    header += (f'    {{Patches[{i}].offset, Original{i}, Identify{suffix}, sizeof(Original{i})}},\n')
+                else:
+                    header += f'    Patches[{i}],\n'
+            header += '};\n'
         header += 'struct DevicePatchSet { UInt32 deviceID; const Patch* patches; };\n'
         header += 'inline constexpr DevicePatchSet DevicePatches[] = {\n'
         for device, _ in capabilities:
-            header += f'    {{0x{device:04X}, Patches}},\n'
+            name = 'Patches' if device == 0x1638 else f'Patches{device:04X}'
+            header += f'    {{0x{device:04X}, {name}}},\n'
         header += '};\n'
         header += ('inline constexpr const Patch* findDevice(UInt32 deviceID) {\n'
                    '    for (const auto& entry : DevicePatches) { if (entry.deviceID == deviceID) { return entry.patches; } }\n'

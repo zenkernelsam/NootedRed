@@ -1,0 +1,23 @@
+// 模拟签名 entitlement 的保留引用，供实际桥接回归共用。
+#pragma once
+#include <cassert>
+#include <cstring>
+using task_t = void*;
+struct OSObject {
+    unsigned releases{0};
+    void release() { ++releases; }
+};
+[[maybe_unused]] static OSObject trueEntitlement, falseEntitlement, otherEntitlement;
+static OSObject* const kOSBooleanTrue = &trueEntitlement;
+[[maybe_unused]] static OSObject* const kOSBooleanFalse = &falseEntitlement;
+static OSObject* clientEntitlement{nullptr};
+static unsigned entitlementQueries{0};
+struct IOUserClient {
+    static OSObject* copyClientEntitlement(task_t task, const char* key)
+    {
+        assert(task == reinterpret_cast<void*>(1));
+        assert(strcmp(key, "com.apple.private.fpsd.client") == 0);
+        ++entitlementQueries;
+        return clientEntitlement;
+    }
+};

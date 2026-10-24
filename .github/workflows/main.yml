@@ -57,6 +57,20 @@ jobs:
           EOF
           exit 1
       - uses: actions/checkout@v7
+        with:
+          submodules: "recursive"
+      - name: Test EC backlight service
+        run: |
+          python3 tools/test_ec_backlight_service.py
+          python3 tools/test_ec_backlight_service.py --thread-sanitizer
+      - run: xcodebuild -configuration Debug -arch x86_64 build
+      - run: xcodebuild -configuration Research\ Release -arch x86_64 build
+      - run: xcodebuild -configuration Release -arch x86_64 build
+      - name: Check IOKit class symbols
+        run: |
+          python3 tools/test_ec_backlight_binary.py build/Debug/NootedRed.kext
+          python3 tools/test_ec_backlight_binary.py 'build/Research Release/NootedRed.kext'
+          python3 tools/test_ec_backlight_binary.py build/Release/NootedRed.kext
       - run: git clone --recurse-submodules https://git.chefkiss.dev/AppleHax/AppleForge.git
       - run: brew install xmake
       - run: xmake f -m debug -y && xmake -y

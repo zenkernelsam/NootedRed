@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		ECB100010000000000000001 /* ECBacklight.cpp in Sources */ = {isa = PBXBuildFile; fileRef = ECB100020000000000000001 /* ECBacklight.cpp */; };
 		EF0400010000000000000005 /* UserVideoDecode.cpp in Sources */ = {isa = PBXBuildFile; fileRef = EF0400020000000000000005 /* UserVideoDecode.cpp */; };
 		EF0400050000000000000001 /* UserMtlDualQuad.cpp in Sources */ = {isa = PBXBuildFile; fileRef = EF0400060000000000000001 /* UserMtlDualQuad.cpp */; };
 		EF0400010000000000000002 /* VCN.cpp in Sources */ = {isa = PBXBuildFile; fileRef = EF0400020000000000000002 /* VCN.cpp */; };
@@ -114,6 +115,8 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		ECB100020000000000000001 /* ECBacklight.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ECBacklight.cpp; sourceTree = "<group>"; };
+		ECB100020000000000000002 /* ECBacklight.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ECBacklight.hpp; sourceTree = "<group>"; };
 		EF0400020000000000000007 /* UserVideoDecodeData.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = UserVideoDecodeData.hpp; sourceTree = "<group>"; };
 		EF0400020000000000000006 /* UserVideoDecode.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = UserVideoDecode.hpp; sourceTree = "<group>"; };
 		EF0400060000000000000001 /* UserMtlDualQuad.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = UserMtlDualQuad.cpp; sourceTree = "<group>"; };
@@ -355,6 +358,8 @@
 				409127632CE2F2D2004DBDB5 /* ASICCaps.hpp */,
 				40F39FDB2CDD6087007AE975 /* Backlight.hpp */,
 				40F39FDD2CDD60A3007AE975 /* Backlight.cpp */,
+				ECB100020000000000000001 /* ECBacklight.cpp */,
+				ECB100020000000000000002 /* ECBacklight.hpp */,
 				401B4A012CF43589002B75A6 /* DebugEnabler.hpp */,
 				401B49FE2CF434FC002B75A6 /* DebugEnabler.cpp */,
 				409127672CE2F360004DBDB5 /* DevCaps.hpp */,
@@ -793,6 +798,7 @@
 				4068B3BA2E97D805007B46BB /* Kexts.cpp in Sources */,
 				401B49FF2CF43510002B75A6 /* DebugEnabler.cpp in Sources */,
 				40F39FDE2CDD60A4007AE975 /* Backlight.cpp in Sources */,
+				ECB100010000000000000001 /* ECBacklight.cpp in Sources */,
 				40F43C6A302BC94700A7DDE9 /* BiosParser.cpp in Sources */,
 				4054608C2CDBDF8C007865E5 /* AGDP.cpp in Sources */,
 				40FC5FDD29BF996900367F9D /* HWLibs.cpp in Sources */,

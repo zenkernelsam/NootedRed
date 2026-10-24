@@ -29,7 +29,10 @@ def main():
 #include <cstring>
 #include <map>
 #include <string>
-#include <VCNKernelData.hpp>
+#include <VCNKernelProfiles.hpp>
+struct Version {unsigned major()const{return kernelMajor;}static unsigned kernelMajor;};
+unsigned Version::kernelMajor=25;
+static Version currentKernelVersion(){return {};}
 using mach_vm_address_t=uintptr_t;
 #define SYSLOG(...) ((void)0)
 template<typename T,size_t N>constexpr size_t arrsize(const T(&)[N]){return N;}
@@ -43,9 +46,9 @@ int main(){
     alignas(8) std::array<uint8_t,8192> memory{};
     const auto base=reinterpret_cast<uintptr_t>(memory.data());
     KernelPatcher patcher;
-    for(bool old:{false,true}) for(bool darwin24:{false,true}){
-        const auto* guards=darwin24 ? (old?VCNKernelData::GuardsDarwin24_5000:VCNKernelData::GuardsDarwin24_6000)
-                                    : (old?VCNKernelData::Guards5000:VCNKernelData::Guards6000);
+    for(unsigned major:{23U,24U,25U})for(bool old:{false,true}){
+        Version::kernelMajor=major;
+        const auto* guards=VCNKernelProfiles::guards(major,old);
         const auto* table=old?VCNKernelData::Table5000:VCNKernelData::Table6000;
         const auto reset=[&]{
             memory.fill(0);patcher.symbols.clear();patcher.symbols[table]=base+256;
@@ -57,35 +60,35 @@ int main(){
             }
         };
         reset();const auto original=memory;
-        assert(verifyKernelABI(patcher,1,base,memory.size(),old,darwin24)&&memory==original);
+        assert(verifyKernelABI(patcher,1,base,memory.size(),old)&&memory==original);
         for(unsigned i=0;i<6;i++){
             reset();uintptr_t target=base+memory.size();memcpy(memory.data()+256+16+guards[i].slot,&target,8);
-            assert(!verifyKernelABI(patcher,1,base,memory.size(),old,darwin24));
+            assert(!verifyKernelABI(patcher,1,base,memory.size(),old));
             reset();target=base-1;memcpy(memory.data()+256+16+guards[i].slot,&target,8);
-            assert(!verifyKernelABI(patcher,1,base,memory.size(),old,darwin24));
+            assert(!verifyKernelABI(patcher,1,base,memory.size(),old));
             if(guards[i].target){
                 reset();patcher.symbols[guards[i].target]++;
-                assert(!verifyKernelABI(patcher,1,base,memory.size(),old,darwin24));
+                assert(!verifyKernelABI(patcher,1,base,memory.size(),old));
                 reset();patcher.symbols.erase(guards[i].target);
-                assert(!verifyKernelABI(patcher,1,base,memory.size(),old,darwin24));
+                assert(!verifyKernelABI(patcher,1,base,memory.size(),old));
             }else{
                 for(unsigned byte:{0U,guards[i].size-1}){
                     reset();memory[2048+i*64+byte]^=1;
-                    assert(!verifyKernelABI(patcher,1,base,memory.size(),old,darwin24));
+                    assert(!verifyKernelABI(patcher,1,base,memory.size(),old));
                 }
                 reset();target=base+memory.size()-guards[i].size+1;
                 memcpy(memory.data()+256+16+guards[i].slot,&target,8);
-                assert(!verifyKernelABI(patcher,1,base,memory.size(),old,darwin24));
+                assert(!verifyKernelABI(patcher,1,base,memory.size(),old));
             }
         }
-        reset();patcher.symbols[table]=0;assert(!verifyKernelABI(patcher,1,base,memory.size(),old,darwin24));
+        reset();patcher.symbols[table]=0;assert(!verifyKernelABI(patcher,1,base,memory.size(),old));
         reset();patcher.symbols[table]=base+memory.size()-16;
-        assert(!verifyKernelABI(patcher,1,base,memory.size(),old,darwin24));
-        reset();assert(!verifyKernelABI(patcher,1,base,0,old,darwin24));
-        assert(!verifyKernelABI(patcher,1,~uintptr_t{0}-8,32,old,darwin24));
-        reset();assert(!verifyKernelABI(patcher,1,base,1024,old,darwin24));
+        assert(!verifyKernelABI(patcher,1,base,memory.size(),old));
+        reset();assert(!verifyKernelABI(patcher,1,base,0,old));
+        assert(!verifyKernelABI(patcher,1,~uintptr_t{0}-8,32,old));
+        reset();assert(!verifyKernelABI(patcher,1,base,1024,old));
         reset();uintptr_t zero=0;memcpy(memory.data()+256+guards[0].slot,&zero,8);
-        assert(verifyKernelABI(patcher,1,base,memory.size(),old,darwin24)); // 不把头部槽误认为地址点。
+        assert(verifyKernelABI(patcher,1,base,memory.size(),old)); // 不把头部槽误认为地址点。
     }
     puts("PASS: actual ABI checks; all 12 slots, named targets, full getters, address-point and bounds rejection");
 }

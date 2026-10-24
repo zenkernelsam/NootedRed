@@ -1,5 +1,6 @@
 """编译实际内核桥接与解析器，用兼容但重排的缓存检验匹配、拒绝和跨页回滚。"""
 from pathlib import Path
+from user_patch_memory_harness import with_memory_helpers
 import subprocess
 import sys
 
@@ -10,6 +11,7 @@ WORK = ROOT / 'build/user-surface-sync/dynamic'
 def main():
     source = (ROOT / 'NootedRed/UserSurfaceSync.cpp').read_text()
     body = source.split('namespace {', 1)[1].split('} // namespace', 1)[0]
+    body = with_memory_helpers(body)
     init = source[source.index('void UserSurfaceSync::init('):]
     stubs = WORK / 'stubs/IOKit'
     stubs.mkdir(parents=True, exist_ok=True)
@@ -27,13 +29,21 @@ def main():
 namespace Patch {} // 模拟 Lilu 的同名命名空间，防止独立测试遗漏集成歧义。
 #include <UserSurfaceSyncData.hpp>
 #include <UserSurfaceSyncResolver.hpp>
+#include <UserLegacyData.hpp>
+#include <UserSubmitGuardData.hpp>
+namespace Buffer {
+template<class T>T* create(size_t count){return new T[count];}
+template<class T>void deleter(T* pointer){delete[] pointer;}
+}
 using namespace UserSurfaceSyncData;
 using user_addr_t=uint64_t;using mach_vm_address_t=uint64_t;using mach_vm_size_t=uint64_t;
 using vm_map_t=void*;using task_t=void*;using proc_t=void*;using natural_t=unsigned;
 using mach_msg_type_number_t=unsigned;using vm_prot_t=int;using kern_return_t=int;
 struct vm_region_submap_short_info_data_64_t {int protection=0,is_submap=0;};using vm_region_recurse_info_t=int*;
 constexpr unsigned PAGE_SIZE=4096,VM_REGION_SUBMAP_SHORT_INFO_COUNT_64=12;
-constexpr int FALSE=0,KERN_SUCCESS=0,KERN_INVALID_ARGUMENT=4,KERN_FAILURE=5;
+constexpr int TRUE=1,FALSE=0,KERN_SUCCESS=0,KERN_INVALID_ADDRESS=1,KERN_PROTECTION_FAILURE=2,KERN_INVALID_ARGUMENT=4,KERN_FAILURE=5;
+constexpr int VM_FLAGS_ANYWHERE=1;
+using vm_address_t=uint64_t;
 constexpr int VM_PROT_NONE=0,VM_PROT_READ=1,VM_PROT_WRITE=2,VM_PROT_EXECUTE=4,VM_PROT_COPY=16;
 #define SYSLOG(...) ((void)0)
 template<typename T,size_t N>constexpr size_t arrsize(const T(&)[N]){return N;}
@@ -41,8 +51,8 @@ static std::map<std::string,unsigned> properties;
 struct NRed{static NRed& singleton(){static NRed n;return n;}void setProp32(const char*k,unsigned v){properties[k]=v;}
  unsigned getDeviceID(){return device;}static unsigned device;};unsigned NRed::device=0x15e7;
 struct Version{unsigned major(){return 25;}unsigned minor(){return 0;}bool majorMatches(unsigned v){return v==25;}};
-constexpr unsigned MACOS_26=25;constexpr unsigned MACOS_15_X=24;static Version currentKernelVersion(){return {};}
-static bool checkKernelArgument(const char*s){return strcmp(s,"-NRedLegacyBlend")==0;}
+constexpr unsigned MACOS_26=25;static Version currentKernelVersion(){return {};}
+static bool checkKernelArgument(const char*s){return strcmp(s,"-NRedDisplayFix")==0;}
 struct KernelPatcher{static constexpr int KernelID=0;struct RouteRequest{template<typename T>RouteRequest(const char*,T,uint64_t&) {}};
  uint64_t solveSymbol(int,const char*){return 1;}void clearError(){}bool routeMultipleLong(int,RouteRequest*,int){return true;}};
 namespace UserSurfaceSync{void init(KernelPatcher&);}
@@ -50,8 +60,11 @@ static task_t current_task(){return reinterpret_cast<void*>(1);}
 static int proc_pid(proc_t){return 217;}static void proc_name(int,char*p,int n){snprintf(p,n,"WindowServer");}
 static std::map<uint64_t,int> pageProtections;static std::set<unsigned> failedProtect;
 static unsigned protects=0,writes=0,failWrite=0,regionFail=0;static bool noMap=false;
-static kern_return_t vm_protect(vm_map_t,uint64_t a,unsigned,int,int flags){
- protects++;if(failedProtect.contains(protects))return 42;assert(pageProtections.contains(a));pageProtections[a]=flags&7;return 0;}
+static kern_return_t vm_allocate(vm_map_t,vm_address_t* page,unsigned,int){*page=0;return KERN_FAILURE;}
+static kern_return_t vm_deallocate(vm_map_t,vm_address_t,unsigned){return KERN_SUCCESS;}
+static kern_return_t vm_protect(vm_map_t,uint64_t a,unsigned,int setMax,int flags){
+ protects++;if(failedProtect.contains(protects))return 42;assert(pageProtections.contains(a));
+ if(setMax)pageProtections[a]&=flags&7;else pageProtections[a]=flags&7;return 0;}
 BODY
 INIT
 static constexpr uint64_t unslid=0x7ff900000000ULL,slide=0x1234000ULL;
@@ -84,7 +97,7 @@ static void reset(unsigned device=0x15e7){
  properties.clear();pageProtections.clear();failedProtect.clear();protects=writes=failWrite=regionFail=reads=originalCalls=0;
  failedRead=0;noMap=false;seenStages=appliedCount=errorCount=windowServerCount=weatherCount=0;
  NRed::device=device;KernelPatcher patcher;UserSurfaceSync::init(patcher);assert(properties.at("NRedImmediateSyncRevision")==4);
- assert(devicePatches);legacyBlend=srdShared=true;computeScratch=false;
+ assert(devicePatches);legacyBlend=srdShared=true;computeScratch=submitGuard=false;
  memset(memory.data(),0,memory.size());copy(0,CacheMagic,16);put32(16,0x300);put32(20,1);
  // 改变 UUID、缓存 slide、映像位置及三个补丁入口，代码仍为相同驱动实现。
  memset(memory.data()+88,0xa7,16);put64(224,unslid);put64(232,memory.size());put64(240,slide);
