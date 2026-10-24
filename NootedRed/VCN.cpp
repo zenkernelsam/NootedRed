@@ -102,8 +102,7 @@ namespace
         return nullptr;
     }
 
-    bool verifyKernelABI(KernelPatcher& patcher, size_t id, mach_vm_address_t slide, size_t size, bool old,
-                         bool useDarwin24 = false)
+    bool verifyKernelABI(KernelPatcher& patcher, size_t id, mach_vm_address_t slide, size_t size, bool old)
     {
         if (size < 16 || slide > ~mach_vm_address_t{0} - size) { return false; }
         const auto* guards = VCNKernelProfiles::guards(currentKernelVersion().major(), old);

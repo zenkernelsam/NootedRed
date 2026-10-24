@@ -35,7 +35,7 @@ def main():
             address = names[symbol]
             end = min(a for a in names.values() if a > address)
             original = cache.read(address, end - address)
-            assert hashlib.sha256(original).hexdigest() == HASHES[symbol]
+            assert hashlib.sha256(original).hexdigest() in HASHES[symbol]
             patched = bytearray(original)
             row = next(r for r in rows if r["label"] == symbol)
             offset = row["address"] - address

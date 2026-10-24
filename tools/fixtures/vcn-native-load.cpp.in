@@ -34,7 +34,6 @@ struct Version {
 Version version;
 const PenguinWizardry::KernelVersion& currentKernelVersion() { static std::optional<PenguinWizardry::KernelVersion> current;return current.emplace(version.majorValue,version.minorValue); }
 bool requested = false;
-bool darwin24 = false;
 bool has5000 = false, has6000 = false, hooks = false, engineAllocated = false;
 bool loadAttempted = false, loadCompleted = false;
 mach_vm_address_t acceleratorStartOriginal = 0;
@@ -72,7 +71,6 @@ FUNCTIONS
 void reset()
 {
     requested = has5000 = callbackPrepared = originalResult = true;
-    darwin24 = false;
     version = {};
     has6000 = hooks = engineAllocated = loadAttempted = loadCompleted = false;
     loadResult = 0;
@@ -84,7 +82,7 @@ void reset()
 int main()
 {
     for (bool display : {false, true}) for (bool video : {false, true}) {
-        bootArgs = {"-NRedVCN"};
+        bootArgs = {};
         if (display) { bootArgs.insert("-NRedDisplayFix"); }
         if (video) { bootArgs.insert("-NRedVideoFix"); }
         forceLoads = 0;
@@ -143,9 +141,8 @@ int main()
     for (unsigned major : {19U,22U,26U}) {
         reset();version.majorValue=major;assert(!supported());
     }
-    reset();version.majorValue=24;version.minorValue=6;darwin24=true;assert(supported());
-    version.minorValue=5;assert(!supported());
-    version.minorValue=6;darwin24=false;assert(!supported());
+    reset();version.majorValue=24;version.minorValue=6;assert(supported());
+    version.minorValue=5;assert(supported());
     reset();device.vendor = 0x1002;device.device = 0x1638;expectedProvider = &device;
     has5000 = false;
     assert(acceleratorStart(expectedSelf, &device) && loadCalls == 1 && !VCN::ready());

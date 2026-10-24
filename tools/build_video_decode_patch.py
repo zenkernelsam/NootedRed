@@ -15,46 +15,34 @@ ROOT = Path(__file__).resolve().parents[1]
 WORK = ROOT / "build/vcn"
 GVA_CHOICE_ADDRESS = 0x7FFA0C59BBAC
 GVA_CHOICE_SIZE = 1136
-GVA_CHOICE_SHA256 = "b7c725552045a9db206ab2eed4edda7ea3d27a29de2feee782204c362764a33d"
+GVA_CHOICE_SHA256 = {"b7c725552045a9db206ab2eed4edda7ea3d27a29de2feee782204c362764a33d", "de66696cb8cce0f7ac81f15a336250778da4d4486dd6fb0e4af33783b25e2201"}
 HASHES = {
-    "__ZN11VACPFactory8createCPEP11_VAHWConfigP11VAIOConnectPP4VACp":
-        "e63a2259ad470bd088d623edc778be34f9f6630fc6156bf6cac808c381b15aa6",
-    "__ZN17VAAcceleratorInfo8identifyEjj": "d7c579bce55c5724ec241f7f9abece9d0f23b1c30178d2f539fc0cabf41dc0bd",
-    "__ZN18VAAddrLibInterface4initEP11VAIOConnectP13sHardwareInfo":
-        "b35bd96d6ca0b8bd9047af67fc3f0f77ef09242f684c65e17d4cee062af155ea",
-    "__ZN4Addr2V27Gfx9Lib20HwlConvertChipFamilyEjj":
-        "4a4a1d2337e580de8dcd851ec686179bc375639441ebf7020dcca69ea780f8fa",
-    "__ZN4Addr3Lib6CreateEPK18_ADDR_CREATE_INPUTP19_ADDR_CREATE_OUTPUT":
-        "b52b9103faa80681fff4d65758ac961b9a3263add45c7597ea7074e61e4fb685",
-    "__ZN9VAFactory20createGraphicsEngineEP9VAContext":
-        "0cca569382df5a722cd0a569536315566bc0351207ae7fe0cb1ae4cca67a1327",
-    "__ZN9VAFactory14createImageBltEP9VAContextj":
-        "c5261154448c0030e75bf1e0f83a5152cb060d05857e317591b2a99ec18ab928",
-    "__ZN9VAFactory17createDeblockerVPEi": "c1ff92f8d8465dfbf165087549acb38a393c633ae8766bb668f93a36e9cf5f14",
-    "__ZN9VAFactory17createDitheringVPEi": "9655251548842be724c1dcd05f22d7dcf114a8923350fd69cef9ac3e7ec35a76",
-    "__ZN9VAFactory20createDeinterlacerVPEi": "eb331d24e2a37de70736a36082d565cf2a39b31e57eedb8e9faa47172598ab8d",
-    "__ZN9VAFactory29createColourFormatConverterVPEi":
-        "5eb36cfc6c78526c1a3d4613cf55cb8d0f4c3a5967ecac16755b11d5ecdbac71",
-    "__ZN9VAFactory31createDynamicContrastEnhancerVPEi":
-        "32d515a6ca3132d7fa258389d7bb109a3541508ee4814949e73fdd728f253dcd",
-    "__ZN14Vcn2EncCommand15getFeedbackSizeEv":
-        "571d3ec0d74000c103203b60450b43b67d758b74b470d0082d45879723021c7a",
-    "__ZN26AVDVcn2AvcEncDataProcessor19ProcessEncodeStatusEP19_VAEncodeStatusInfoPvP15VAVendorTexture":
-        "d51bd9c906e803b9fc9b1b247a79f30059ebec4cfcb92f4492dfc1ed6fa21230",
-    "__ZN27AVDVcn2HevcEncDataProcessor19ProcessEncodeStatusEP19_VAEncodeStatusInfoPvP15VAVendorTexture":
-        "1c3726a90b3e8f1d320700b05d3bf6cf9c7f49bd4afae0a2aac1cb44aaaaf038",
-    "__ZN11Vcn2Encoder15setEncodeParamsEPvP15VAVendorTexture":
-        "c8193ea2d2c7193012a5618b6918d41fffe30ad0c1389256fee983e66ac24347",
+    "__ZN11VACPFactory8createCPEP11_VAHWConfigP11VAIOConnectPP4VACp": {'e63a2259ad470bd088d623edc778be34f9f6630fc6156bf6cac808c381b15aa6', '4d6e96cf8b2b6ad3fb7aaa17b0b5a93c7649fed9308912caeaf851dbf3c19b84'},
+    "__ZN17VAAcceleratorInfo8identifyEjj": {'d7c579bce55c5724ec241f7f9abece9d0f23b1c30178d2f539fc0cabf41dc0bd', 'dd95fd9d1ea9740465bcefa6d68770a0ebbb6e8161e97939be19ff1c1671737e'},
+    "__ZN18VAAddrLibInterface4initEP11VAIOConnectP13sHardwareInfo": {'b35bd96d6ca0b8bd9047af67fc3f0f77ef09242f684c65e17d4cee062af155ea', 'abafc0170bb2bfa7c333371531e68cc01c237d6ddf4f297711f71c6f0773a264'},
+    "__ZN4Addr2V27Gfx9Lib20HwlConvertChipFamilyEjj": {'4a4a1d2337e580de8dcd851ec686179bc375639441ebf7020dcca69ea780f8fa', '4a4a1d2337e580de8dcd851ec686179bc375639441ebf7020dcca69ea780f8fa'},
+    "__ZN4Addr3Lib6CreateEPK18_ADDR_CREATE_INPUTP19_ADDR_CREATE_OUTPUT": {'b52b9103faa80681fff4d65758ac961b9a3263add45c7597ea7074e61e4fb685', 'b0a123ffae9ff1b251077346fe12ba2640c007bdbb12ec15716855c5bf160063'},
+    "__ZN9VAFactory20createGraphicsEngineEP9VAContext": {'0cca569382df5a722cd0a569536315566bc0351207ae7fe0cb1ae4cca67a1327', '65ac04e1da1d0c5445de83db24583ffbfb29f2851928dc44cddb885c0d7846fc'},
+    "__ZN9VAFactory14createImageBltEP9VAContextj": {'c5261154448c0030e75bf1e0f83a5152cb060d05857e317591b2a99ec18ab928', '7052a8a0a8a73e5aac554bfd00a395e48a30af2de23587f0986710bd034cd2a2'},
+    "__ZN9VAFactory17createDeblockerVPEi": {'c1ff92f8d8465dfbf165087549acb38a393c633ae8766bb668f93a36e9cf5f14', '58fcd2efbaca0055df4e6dbb2bd54da7d6fc07e9beebbd216cb047eeb9c2271e'},
+    "__ZN9VAFactory17createDitheringVPEi": {'9655251548842be724c1dcd05f22d7dcf114a8923350fd69cef9ac3e7ec35a76', '7bbd8395c27103ac3c5a7188fa79ef50b03c95cacf3dc6d5edee6fa8a7b9e72b'},
+    "__ZN9VAFactory20createDeinterlacerVPEi": {'eb331d24e2a37de70736a36082d565cf2a39b31e57eedb8e9faa47172598ab8d', '3eeaf7d7db19379578209f019145ef116dc1526ee091b3e42e43255a07ac89ad'},
+    "__ZN9VAFactory29createColourFormatConverterVPEi": {'5eb36cfc6c78526c1a3d4613cf55cb8d0f4c3a5967ecac16755b11d5ecdbac71', '8ed81834c8e63adc03f7714b2cf866a15db0d4ee444e6d8be66363cbb17369cd'},
+    "__ZN9VAFactory31createDynamicContrastEnhancerVPEi": {'32d515a6ca3132d7fa258389d7bb109a3541508ee4814949e73fdd728f253dcd', 'd9e9dc85b70ed7c1f9fa236ba967bfe7f5fee5aee3d3f9fb88a1b44b85fd184b'},
+    "__ZN14Vcn2EncCommand15getFeedbackSizeEv": {'571d3ec0d74000c103203b60450b43b67d758b74b470d0082d45879723021c7a', '571d3ec0d74000c103203b60450b43b67d758b74b470d0082d45879723021c7a'},
+    "__ZN26AVDVcn2AvcEncDataProcessor19ProcessEncodeStatusEP19_VAEncodeStatusInfoPvP15VAVendorTexture": {'d51bd9c906e803b9fc9b1b247a79f30059ebec4cfcb92f4492dfc1ed6fa21230', 'fe78c5a8d4508c9a0eab2ba96830634b5f8f8a7982b06cd91c2bc1f6a1e2f493'},
+    "__ZN27AVDVcn2HevcEncDataProcessor19ProcessEncodeStatusEP19_VAEncodeStatusInfoPvP15VAVendorTexture": {'1c3726a90b3e8f1d320700b05d3bf6cf9c7f49bd4afae0a2aac1cb44aaaaf038', '0ff1d68ec316f8497278a3be223c2eabe642f68e894fa7ecc808e70168c5b2c2'},
+    "__ZN11Vcn2Encoder15setEncodeParamsEPvP15VAVendorTexture": {'c8193ea2d2c7193012a5618b6918d41fffe30ad0c1389256fee983e66ac24347', 'c8193ea2d2c7193012a5618b6918d41fffe30ad0c1389256fee983e66ac24347'},
 }
 # 短 getter 需要至少 32 字节锚点；两个编码器的 pitch 函数完全相同，需要相邻完整函数区分。
 # 相邻函数仅参与完整匹配和重定位核验，不修改其字节。
 ENCODE_CONTEXTS = {
     "__ZN14Vcn2EncCommand15getFeedbackSizeEv": (
         "__ZN14Vcn2EncCommand20addSessionInitPacketEv", 36,
-        "053f7d73eba9f63f788d33260cea0e3a81e0850b62795d165948349bf15fc5d0"),
+        {"053f7d73eba9f63f788d33260cea0e3a81e0850b62795d165948349bf15fc5d0", "30f2bdbaf54a9b10c7fe58119b8f288b5118bfa069bc062e01c15a7d248171d7"}),
     "__ZN11Vcn2Encoder15setEncodeParamsEPvP15VAVendorTexture": (
         "__ZN11Vcn2Encoder18setAvcEncodeParamsEPv", 292,
-        "f1a48a1a06df4907da861452b1339311d836e1dde21167e6d15b0dfa9204ab3d"),
+        {"f1a48a1a06df4907da861452b1339311d836e1dde21167e6d15b0dfa9204ab3d", "e7d4ca36567f06e784dda6aeb0238fa9947d04ec562518f28e8c98628e1bf1e7"}),
 }
 
 
@@ -124,7 +112,7 @@ def main():
             address = names[name]
             end = min(a for a in names.values() if a > address)
             code = cache.read(address, end - address)
-            if hashlib.sha256(code).hexdigest() != HASHES[name]:
+            if hashlib.sha256(code).hexdigest() not in HASHES[name]:
                 raise ValueError(f"原生函数未核实：{name}")
             context = code
             if name in ENCODE_CONTEXTS:
@@ -132,7 +120,7 @@ def main():
                 if end != names[following] or min(a for a in names.values() if a > end) != address + size:
                     raise ValueError(f"编码锚点边界未核实：{name}")
                 context = cache.read(address, size)
-                if hashlib.sha256(context).hexdigest() != digest:
+                if hashlib.sha256(context).hexdigest() not in digest:
                     raise ValueError(f"编码锚点未核实：{name}")
             full_functions[name] = (address, context)
             return address, code
@@ -144,13 +132,19 @@ def main():
                             "fairplayDecode": fairplay_decode})
 
         gva_choice = cache.read(GVA_CHOICE_ADDRESS, GVA_CHOICE_SIZE)
-        if hashlib.sha256(gva_choice).hexdigest() != GVA_CHOICE_SHA256:
+        if hashlib.sha256(gva_choice).hexdigest() not in GVA_CHOICE_SHA256:
             raise ValueError("AppleGVA 选择函数未核实，拒绝生成")
-        assert gva_choice[0x287:0x28D] == bytes.fromhex("0f84ac010000")
         # 非专用 AMD 机型的原生回退只选择 Intel；无 Intel 时跳到已有的 AMD 插入路径。
         # 此前已检查至少存在一个可用 GPU，因此该出口必有 AMD，其他选择与显式请求不变。
-        add("AppleGVA_AMDOnlyFallback", GVA_CHOICE_ADDRESS + 0x287,
-            gva_choice[0x287:0x28D], bytes.fromhex("0f842a000000"))
+        # 该回站点是构建相关：steve 参考 build 为 +0x287 jz+0x1AC→jz+0x2A；
+        # 24H32 (15.8.1) 同位置为 `test r15,r15; jz +0x3D6`，AMD 插入路径落点
+        # 未经现场反汇编核实前不生成，保持该站点按未覆盖构建跳过。
+        if gva_choice[0x287:0x28D] == bytes.fromhex("0f84ac010000"):
+            add("AppleGVA_AMDOnlyFallback", GVA_CHOICE_ADDRESS + 0x287,
+                gva_choice[0x287:0x28D], bytes.fromhex("0f842a000000"))
+        else:
+            import sys as _sys
+            print("WARNING: AppleGVA AMDOnlyFallback 站点在本构建未核实，跳过", file=_sys.stderr)
 
         name = "__ZN17VAAcceleratorInfo8identifyEjj"
         address, original = function(name)
