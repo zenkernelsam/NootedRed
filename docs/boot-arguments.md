@@ -34,9 +34,13 @@ SrdShared、LegacyBlend、ComputeScratch 和 SubmitGuard，保留原生同步策
 
 ```text
 -NRedImmediateSync -NRedSrdShared -NRedLegacyBlend -NRedComputeScratch
--NRedTransfer1x1 -NRedVCN -NRedNoSubmitGuard -NRedHDRIntegerFilter
+-NRedTransfer1x1 -NRedNoSubmitGuard -NRedHDRIntegerFilter
 NRedECBacklight=1 NRedECBacklight=2
 ```
+
+`-NRedVCN` 是例外：作为 `-NRedVideoFix` 的兼容别名继续被
+`VCN::init` 与 `UserVideoDecode::init` 识别（已部署配置依赖它），
+新配置仍应写 `-NRedVideoFix`。
 
 诊断属性仍沿用模块名，例如 `NRedVCN*`、`NRedComputeScratch*`、`NRedECBacklight` 服务。
 这些名称是运行状态，不是旧参数兼容入口。

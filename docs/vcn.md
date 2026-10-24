@@ -25,10 +25,18 @@
 Tahoe 用户态保留参考 `x86_64h` 缓存 UUID 的静态快路径；其他 UUID 进入动态解析，
 按映像路径、完整函数和实际相对引用生成补丁计划。具体约束见 [动态缓存匹配](user-cache-dynamic.md)。
 使用 `-NRedVideoFix` 显式启用；显示修复另用 `-NRedDisplayFix`。
-完整组合见 [启动参数](boot-arguments.md)，旧 `-NRedVCN` 不再读取。
+完整组合见 [启动参数](boot-arguments.md)；`-NRedVCN` 保留为兼容别名。
 默认关闭，未增加独显或其他视频代际的支持。
 
-## Darwin 24.6 ABI 校验与显式实验激活
+## Darwin 24.6 ABI 校验与显式实验激活（历史机制，已被 profile 化取代）
+
+> **注意**：本节描述的 `-NRedDarwin24` 数据选择、diagnostic-only 默认与
+> `-NRedVCNEnable` 显式激活机制已被上游多版本 profile 架构取代：
+> `-NRedVideoFix`（或兼容别名 `-NRedVCN`）按 Darwin 主版本自动选择
+> `VCNLegacyKernelData::Patches23/Patches24`（23/24）或 `VCNKernelData::Patches`（25），
+> `diagnosticBridge`/`VCN::activate()` 不再存在，`X5000` 以 `VCN::ready()` 为准。
+> 下文保留作为 Patches24 数据的字节验证 provenance（`Patches24` 与原
+> `PatchesDarwin24` 20 条逐项一致），其参数语义描述已过期。
 
 当前 fork 保留一组 **macOS 15.8.1 / Darwin 24.6** 的 kernel patch 与 ABI guard 数据。
 必须同时使用 `-NRedVCN -NRedDarwin24` 才选择该数据；Darwin 24 只接受 minor 6。
