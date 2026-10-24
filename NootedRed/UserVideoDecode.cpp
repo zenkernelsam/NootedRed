@@ -210,16 +210,9 @@ namespace
         }
         using namespace UserVideoDecodeData;
         const auto* patches    = devicePatches;
-        UInt32      patchCount = legacyProfile ? legacyProfile->patchCount : static_cast<UInt32>(PatchCount);
+        UInt32      patchCount = static_cast<UInt32>(PatchCount);
         UserVideoDecodeData::Patch legacyPatches[PatchCount];
-        if (legacyProfile) {
-            if (patchCount > PatchCount) { return result; }
-            for (UInt32 i = 0; i < patchCount; ++i) {
-                const auto& patch = legacyProfile->patches[i];
-                legacyPatches[i]  = {patch.offset, patch.original, patch.patched, patch.size};
-            }
-            patches = legacyPatches;
-        }
+        bool        legacyActive{false};
         UInt64 base{0};
         UInt8  header[104];
         if (readUser(args->startAddress, &base, sizeof(base)) != 0 || base == 0
@@ -246,12 +239,25 @@ namespace
             memcpy(&value, header + 88 + i * 4, sizeof(value));
             NRed::singleton().setProp32(uuidKeys[i], value);
         }
-        if (legacyProfile && !UserLegacyCompat::matches(readUser, base, header + 88, *legacyProfile)) {
-            stage(Stage::CacheMismatch, fairPlayPID);
-            NRed::singleton().setProp32("NRedVCNUserLegacyRejected", 1);
-            return result;
+        // 生成的 per-device 数据在自身缓存上优先；legacy profile 仅在外来构建
+        // 且其 UUID+页面核验通过时激活，其余外来缓存仍走动态 resolver。
+        const bool knownCache = memcmp(header + 88, CacheUUID, sizeof(CacheUUID)) == 0;
+        if (!knownCache && legacyProfile) {
+            if (legacyProfile->patchCount <= PatchCount
+                && UserLegacyCompat::matches(readUser, base, header + 88, *legacyProfile)) {
+                patchCount = legacyProfile->patchCount;
+                for (UInt32 i = 0; i < patchCount; ++i) {
+                    const auto& patch = legacyProfile->patches[i];
+                    legacyPatches[i]  = {patch.offset, patch.original, patch.patched, patch.size};
+                }
+                patches      = legacyPatches;
+                legacyActive = true;
+            }
+            else {
+                NRed::singleton().setProp32("NRedVCNUserLegacyRejected", 1);
+            }
         }
-        const bool    dynamic = !legacyProfile && memcmp(header + 88, CacheUUID, sizeof(CacheUUID)) != 0;
+        const bool    dynamic = !knownCache && !legacyActive;
         DynamicBuffer dynamicBuffer(dynamic);
         if (dynamic) {
             if (!dynamicBuffer.plan) {
@@ -269,7 +275,7 @@ namespace
         }
 
         if (fairPlayDecode) {
-            const auto mask = legacyProfile ? legacyProfile->fairPlayMask : FairPlayDecodeMask;
+            const auto mask = legacyActive ? legacyProfile->fairPlayMask : FairPlayDecodeMask;
             if (!selectFairPlayDecode(base, patches, patchCount, legacyPatches, mask)) {
                 stage(Stage::CodeMismatch, fairPlayPID);
                 return result;
@@ -407,7 +413,7 @@ void UserVideoDecode::init(KernelPatcher& patcher)
 {
     NRed::singleton().setProp32("NRedVCNSharedRegionStackRevision", 1);
     fairPlayDriverOnly = false;
-    if (!checkKernelArgument("-NRedVideoFix")) { return; }
+    if (!checkKernelArgument("-NRedVideoFix") && !checkKernelArgument("-NRedVCN")) { return; }
     const auto  deviceID   = NRed::singleton().getDeviceID();
     const auto* capability = VCNCapabilities::findDevice(deviceID);
     const auto  rejected   = VCNCapabilities::rejection(deviceID, currentKernelVersion());
@@ -452,6 +458,8 @@ void UserVideoDecode::init(KernelPatcher& patcher)
     if (fairPlayDriverOnly) {
         NRed::singleton().setProp32("NRedDRMVideoEnabled", 1);
         NRed::singleton().setProp32("NRedDRMVideoRevision", 4);
+        // 诊断口径：本机已知 CacheUUID 实际应用生成 FairPlayDecodeMask；
+        // legacyProfile->fairPlayMask 仅描述外来缓存匹配 legacy 时的取值。
         NRed::singleton().setProp32("NRedDRMVideoMask", legacyProfile ? legacyProfile->fairPlayMask :
                                                                         UserVideoDecodeData::FairPlayDecodeMask);
     }

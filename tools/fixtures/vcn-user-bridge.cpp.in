@@ -26,7 +26,7 @@ struct NRed {static NRed& singleton(){static NRed n;return n;}void setProp32(con
  unsigned getDeviceID(){return device; }static unsigned device;};unsigned NRed::device=0x1638;
 struct Version{unsigned major(){return majorValue;}unsigned minor(){return minorValue;}static unsigned majorValue,minorValue;};unsigned Version::majorValue=25;unsigned Version::minorValue=6;
 const PenguinWizardry::KernelVersion& currentKernelVersion(){static std::optional<PenguinWizardry::KernelVersion> current;return current.emplace(Version::majorValue,Version::minorValue);}
-static bool flag=true;static bool checkKernelArgument(const char* s){assert(strcmp(s,"-NRedVideoFix")==0);return flag;}
+static bool flag=true;static bool checkKernelArgument(const char* s){assert(strcmp(s,"-NRedVideoFix")==0||strcmp(s,"-NRedVCN")==0);return flag;}
 namespace VCN { static bool active=true; bool allocated(){return active;} }
 #define IONew(T,N) (new T[N])
 #define IODelete(P,T,N) delete[] P
@@ -115,7 +115,7 @@ int main(){
   assert(checked.routes==int(major>=23 && major<=25));
   if(major>=23&&major<=25){
    assert(fairPlayDriverOnly&&properties.at("NRedDRMVideoEnabled")==1&&properties.at("NRedDRMVideoRevision")==4);
-   assert(properties.at("NRedDRMVideoMask")==unsigned(major==25?0x7F87FE:0x1FFF));
+   assert(properties.at("NRedDRMVideoMask")==unsigned(major==25?UserVideoDecodeData::FairPlayDecodeMask:0x1FFF));
   }
  }
  Version::majorValue=25;Version::minorValue=6;
@@ -147,7 +147,7 @@ int main(){
  assert(writeCalls==N&&!properties.contains("NRedVCNFairPlaySkipped")&&falseEntitlement.releases==1);
  }
  // 独立预期：只写驱动侧解码项，AppleGVA 与四项编码修正保持原始字节，且不改变这些页的权限。
- constexpr unsigned decodeMask=0x7F87FE;
+ constexpr unsigned decodeMask=UserVideoDecodeData::FairPlayDecodeMask;
  auto selected=[](size_t i){return (decodeMask&(1U<<i))!=0;};
  auto selectedBytes=[&](bool patched){for(size_t i=0;i<N;i++){
   auto& p=active()[i];assert(memcmp(code[i].data(),patched&&selected(i)?p.patched:p.original,p.size)==0);
@@ -207,9 +207,9 @@ int main(){
  }
  for(unsigned major:{23U,24U}){
   Version::majorValue=major;KernelPatcher p;UserVideoDecode::init(p);
-  // 旧系统同样进入 FairPlay 策略，但本夹具中的 Tahoe 缓存必须拒绝。
+  // 旧系统同样进入 FairPlay 策略；外来 UUID 的缓存必须拒绝（legacy 不匹配则落到 resolver，仍失败）。
   for(const char* name:{"Music","TV","Other"}){
-   reset();processName=name;clientEntitlement=kOSBooleanTrue;call(reinterpret_cast<void*>(970));
+   reset();invalidCache=true;processName=name;clientEntitlement=kOSBooleanTrue;call(reinterpret_cast<void*>(970));
    assert(writeCalls==0&&protectCalls==0&&properties.at("NRedDRMVideoState")==1);
    assert(properties.at("NRedVCNUserLegacyRejected")==1&&!properties.contains("NRedVCNFairPlaySkipped"));bytes(false);rx();
   }

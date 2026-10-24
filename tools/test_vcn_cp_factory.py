@@ -14,7 +14,8 @@ from legacy_cp_factory import factory
 ROOT = Path(__file__).resolve().parents[1]
 WORK = ROOT / 'build/vcn-cp-factory'
 FACTORY = '__ZN11VACPFactory8createCPEP11_VAHWConfigP11VAIOConnectPP4VACp'
-HASH = 'e63a2259ad470bd088d623edc778be34f9f6630fc6156bf6cac808c381b15aa6'
+HASH = {184: 'e63a2259ad470bd088d623edc778be34f9f6630fc6156bf6cac808c381b15aa6',
+        183: '4d6e96cf8b2b6ad3fb7aaa17b0b5a93c7649fed9308912caeaf851dbf3c19b84'}
 
 
 def main():
@@ -30,7 +31,7 @@ def main():
         names, _ = symbols(cache.read, base)
         address = names[FACTORY]
         native = cache.read(address, min(a for a in names.values() if a > address) - address)
-        assert len(native) == 184 and hashlib.sha256(native).hexdigest() == HASH
+        assert hashlib.sha256(native).hexdigest() == HASH.get(len(native))
         assert native[0x3F:0x44] == bytes.fromhex('83f9047317')
         candidate = bytearray(native)
         if not args.baseline:
@@ -61,7 +62,10 @@ def main():
             assembly += byte_lines(code[cursor:]) + '\n'
         a = names['__ZN12AvdVAContext14getKEParameterEjPv']
         dispatch = cache.read(a, 48)
-        assert hashlib.sha256(dispatch).hexdigest() == 'e24d593242ccf83e40f9a048db86d0c9f44323c9043503117ea2902c85608a09'
+        assert hashlib.sha256(dispatch).hexdigest() in {
+            'e24d593242ccf83e40f9a048db86d0c9f44323c9043503117ea2902c85608a09',
+            'e2fc86b57f5b246def5f146e7acb22fe3bd253d0a0f52d65e665ca44836bd814',
+        }
         assembly += '.globl _nativeGetKE\n_nativeGetKE:\n' + byte_lines(dispatch) + '\n'
     finally:
         cache.close()

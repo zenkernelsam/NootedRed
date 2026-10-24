@@ -4,9 +4,12 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 OLD_FLAGS = [
-    '-NRedVCN', '-NRedLegacyBlend', '-NRedImmediateSync', '-NRedSrdShared',
+    '-NRedLegacyBlend', '-NRedImmediateSync', '-NRedSrdShared',
     '-NRedComputeScratch', '-NRedTransfer1x1', '-NRedHDRIntegerFilter', '-NRedNoSubmitGuard',
 ]
+# `-NRedVCN` 是刻意的兼容别名：VCN.cpp 与 UserVideoDecode.cpp 都把它解析为 -NRedVideoFix，
+# 已部署 SSD/USB 的 boot-args 依赖它继续生效。
+ALIAS_FLAGS = ['-NRedVCN']
 
 
 def validate(kext):
@@ -15,6 +18,8 @@ def validate(kext):
         assert name.encode() + b'\0' in data, f'缺少新参数：{name}'
     for name in OLD_FLAGS:
         assert name.encode() + b'\0' not in data, f'残留旧参数：{name}'
+    for name in ALIAS_FLAGS:
+        assert name.encode() + b'\0' in data, f'缺少兼容别名：{name}'
     for marker in [b'NRedHDRFilter', b'HDRFilter-v1', b'UserHDRFilterData']:
         assert marker not in data, f'残留 HDR 候选：{marker.decode()}'
 
@@ -26,6 +31,10 @@ def main():
         source = (ROOT / 'NootedRed' / path).read_text()
         for name in OLD_FLAGS:
             assert f'checkKernelArgument("{name}")' not in source, f'{path} 仍解析 {name}'
+    for path in ['UserVideoDecode.cpp', 'VCN.cpp']:
+        source = (ROOT / 'NootedRed' / path).read_text()
+        for name in ALIAS_FLAGS:
+            assert f'checkKernelArgument("{name}")' in source, f'{path} 缺少兼容别名 {name}'
     ec = (ROOT / 'NootedRed/ECBacklight.cpp').read_text()
     assert 'PE_parse_boot_argn("NRedECBacklight"' not in ec
     for path in sys.argv[1:]:

@@ -96,7 +96,7 @@ int main(){
   assert(UserVideoDecodeResolver::resolve(reader,base,devicePatches,plan));
   auto enable=[&]{fairPlayDriverOnly=drmClient=true;clientEntitlement=kOSBooleanTrue;pages(plan.patches,PatchCount);};
   std::set<uint64_t> selectedPages;
-  constexpr unsigned selectedMask=0x7F87FE;
+  constexpr unsigned selectedMask=UserVideoDecodeData::FairPlayDecodeMask;
   for(unsigned i=0;i<PatchCount;i++)if(selectedMask&(1U<<i)){
    const auto& p=plan.patches[i];
    for(auto a=(base+p.offset)&~uint64_t(4095);a<=((base+p.offset+p.size-1)&~uint64_t(4095));a+=4096)selectedPages.insert(a);

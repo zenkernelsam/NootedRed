@@ -119,7 +119,7 @@ MAIN
 
 RENDER = r'''
 int main(){
- for(unsigned major:{23U,24U})for(unsigned device:DEVICES){
+ for(unsigned major:MAJORS)for(unsigned device:DEVICES){
   hostMajor=major;NRed::singleton().device=device;
   const auto* profile=PROFILE;assert(profile);
   KernelPatcher kernel;MODULE::init(kernel);assert(kernel.routes==1);
@@ -221,6 +221,9 @@ def main():
         init = source[source.index(f'void {module}::init('):]
         main_code = RENDER.replace('MODULE', module).replace('PROFILE',
             'UserLegacyData::metal(major)' if module == 'UserSurfaceSync' else 'UserLegacyData::video(major,device)')
+        # 生成的 per-device 数据在自身 UUID 上优先于 legacy；OS24 video profile 的 UUID 与本机生成缓存相同，
+        # 在新优先级下永不激活（生成集胜出），故 video 只跑 major 23 的 legacy 矩阵。
+        main_code = main_code.replace('MAJORS', '{23U,24U}' if module == 'UserSurfaceSync' else '{23U}')
         main_code = main_code.replace('DEVICES', '{0x15D8U,0x15DDU,0x15E7U,0x1636U,0x1638U,0x164CU}'
                                      if module == 'UserSurfaceSync' else '{0x15E7U,0x1636U,0x1638U,0x164CU}')
         main_code = main_code.replace('FAIRPLAY', '' if module == 'UserSurfaceSync' else FAIRPLAY)
