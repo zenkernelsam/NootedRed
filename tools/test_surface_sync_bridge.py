@@ -20,7 +20,7 @@ def main():
     init = source[source.index("void UserSurfaceSync::init("):]
     stub = WORK / "stubs/IOKit"
     stub.mkdir(parents=True, exist_ok=True)
-    (stub / "IOTypes.h").write_text("#pragma once\n#include <cstdint>\nusing UInt8=uint8_t;using UInt32=uint32_t;using UInt64=uint64_t;\n")
+    (stub / "IOTypes.h").write_text("#pragma once\n#include <cstdint>\nusing UInt8=uint8_t;using UInt16=uint16_t;using UInt32=uint32_t;using UInt64=uint64_t;\n")
     util = WORK / "stubs/Headers"
     util.mkdir(parents=True, exist_ok=True)
     (util / "kern_util.hpp").write_text('#pragma once\n#include <IOKit/IOTypes.h>\n')
@@ -41,10 +41,17 @@ def main():
 #include <UserSubmitGuardData.hpp>
 #include <UserSurfaceSyncResolver.hpp>
 #include <UserLegacyData.hpp>
+#include <coordinator-inactive.hpp>
+#include <VPF/ExecutableTrampolineResource.hpp>
+#include <VPF/MetalTransactionExecutor.hpp>
+#include <VPF/TransactionExecutor.hpp>
+#include <VPF/VerifiedPatchPlan.hpp>
 using user_addr_t=uint64_t;using mach_vm_address_t=uint64_t;using mach_vm_size_t=uint64_t;
 using vm_map_t=void*;using task_t=void*;using proc_t=void*;using natural_t=unsigned;
 using mach_msg_type_number_t=unsigned;using vm_prot_t=int;using kern_return_t=int;
-struct vm_region_submap_short_info_data_64_t {int protection=0,max_protection=0,is_submap=0;};using vm_region_recurse_info_t=int*;
+struct vm_region_submap_info_data_64_t {int protection=0,max_protection=0,is_submap=0;unsigned object_id=0;
+ unsigned char share_mode=0;unsigned short shadow_depth=0;};
+using vm_region_submap_short_info_data_64_t=vm_region_submap_info_data_64_t;using vm_region_recurse_info_t=int*;
 constexpr unsigned PAGE_SIZE=4096,VM_REGION_SUBMAP_SHORT_INFO_COUNT_64=12;
 constexpr int TRUE=1,FALSE=0,KERN_SUCCESS=0,KERN_INVALID_ADDRESS=1,KERN_PROTECTION_FAILURE=2,KERN_INVALID_ARGUMENT=4,KERN_FAILURE=5;
 constexpr int VM_FLAGS_ANYWHERE=1,KERN_RESOURCE_SHORTAGE=3;
@@ -66,7 +73,9 @@ struct NRed {static NRed& singleton(){static NRed n;return n;}void setProp32(con
 struct Version{static unsigned majorValue,minorValue;};unsigned Version::majorValue=25;unsigned Version::minorValue=6;
 const PenguinWizardry::KernelVersion& currentKernelVersion(){static std::optional<PenguinWizardry::KernelVersion> current;return current.emplace(Version::majorValue,Version::minorValue);}
 static bool flag=true,candidateFlag=false,legacyFlag=false,transferFlag=false,scratchFlag=false;
-static bool checkKernelArgument(const char* s){assert(strcmp(s,"-NRedDisplayFix")==0);return flag;}
+static bool checkKernelArgument(const char* s){
+ assert(strcmp(s,"-NRedDisplayFix")==0||strcmp(s,"-NRedNoFVRC")==0);
+ return strcmp(s,"-NRedDisplayFix")==0&&flag;}
 struct KernelPatcher{
  static constexpr int KernelID=0;int solves=0,routes=0;bool missing=false,routeOK=true;
  struct RouteRequest{template<typename T>RouteRequest(const char*,T,uint64_t&) {}};
@@ -116,7 +125,8 @@ static int reader(uint64_t address,void* p,size_t size){
  if(address==0x1000){memcpy(p,&base,8);return 0;}
  if(address==base){memset(p,0,size);memcpy(p,UserSurfaceSyncData::CacheMagic,16);memcpy(static_cast<uint8_t*>(p)+88,UserSurfaceSyncData::CacheUUID,16);
   if(invalidCache)static_cast<uint8_t*>(p)[88]^=1;return 0;}
- for(size_t i=0;i<MaxN;i++){auto record=fixture(i);if(address==base+record.offset && size==record.size){memcpy(p,code[i].data(),size);return 0;}}
+ for(size_t i=0;i<MaxN;i++){auto record=fixture(i);const auto start=base+record.offset;
+  if(address>=start && address-start<record.size && size<=record.size-(address-start)){memcpy(p,code[i].data()+(address-start),size);return 0;}}
  for(auto& entry:UserSurfaceSyncData::WithdrawnTransferGuards){
   if(address==base+entry.offset){assert(size==entry.size);memcpy(p,entry.original,size);if(withdrawnCode)static_cast<uint8_t*>(p)[0]^=1;return 0;}}
  return 1;
@@ -133,7 +143,7 @@ static void reset(){
  assert(liveWorkspaces==0);failWorkspaceAllocation=false;
  protection.clear();maxProtection.clear();properties.clear();failProtect.clear();protectCalls=writeCalls=failWrite=originalResult=regionMode=0;
  writeOrder.clear();
- invalidCache=noMap=withdrawnCode=false;seenStages=appliedCount=errorCount=windowServerCount=weatherCount=0;isWindowServer=isWeather=false;
+ invalidCache=noMap=withdrawnCode=false;published={};seenStages=appliedCount=errorCount=windowServerCount=weatherCount=0;isWindowServer=isWeather=false;
  for(size_t i=0;i<MaxN;i++){auto p=fixture(i);memcpy(code[i].data(),p.original,p.size);if(i<N){const auto page=(base+p.offset)&~uint64_t(4095);protection[page]=5;maxProtection[page]=5;}}
  originalCheck=reinterpret_cast<uint64_t>(original);getTaskMap=map;queryRegion=query;readUser=reader;writeUser=writer;
 }
@@ -151,7 +161,7 @@ int main(int argc,char** argv){
   NRed::device=entry.deviceID;Version::majorValue=major;Version::minorValue=minor;properties.clear();
   KernelPatcher accepted;UserSurfaceSync::init(accepted);assert(accepted.routes==1);
   assert(submitGuard && legacyBlend && renderRequested);
-  assert(computeScratch==(major==25) && srdShared==(major==25));
+  assert(computeScratch==(major>=24) && srdShared==(major>=24));
   assert(properties.at("NRedDisplayFixEnabled")==1 && properties.at("NRedSubmitGuardEnabled")==1);
  }
  NRed::device=0x1638;Version::minorValue=6;
@@ -175,6 +185,7 @@ scratchFlag=argc>1&&strcmp(argv[1],"--scratch")==0;candidateFlag=argc>1&&strcmp(
  NRed::device=argc>2?unsigned(strtoul(argv[2],nullptr,0)):0x1638;devicePatches=UserSurfaceSyncData::findDevice(NRed::device);assert(devicePatches);
  reset();failWorkspaceAllocation=true;call();bytes(false);rx();assert(writeCalls==0 && protectCalls==0);assert(properties.at("NRedImmediateSyncLastError")==KERN_RESOURCE_SHORTAGE);
  reset();call();bytes(true);rx();assert(writeCalls==N && properties.at("NRedImmediateSyncApplied")==1);
+ assert(properties.at("NRedDisplayVPFPlanVerified")==1 && properties.at("NRedDisplayVPFPlanSites")==N);
  int prior=writeCalls;call();assert(writeCalls==prior && properties.at("NRedImmediateSyncD07")==1);
  for(int p=1;p<=int(computeScratch?3:(legacyFlag?2:1));p++){reset();failProtect.insert(p);call();assert(writeCalls==0);bytes(false);rx();}
  for(int entry=1;entry<=int(N);entry++){reset();failWrite=entry;call();bytes(false);rx();assert(!properties.contains("NRedImmediateSyncApplied"));}
@@ -221,7 +232,7 @@ scratchFlag=argc>1&&strcmp(argv[1],"--scratch")==0;candidateFlag=argc>1&&strcmp(
     file.write_text(harness)
     exe = WORK / "test-bridge"
     subprocess.run(["clang++", "-std=c++23", "-O2", "-I", str(WORK / "stubs"), "-I", str(ROOT / "NootedRed"),
-                    str(file), "-o", str(exe)], check=True, timeout=60)
+                    "-I", str(ROOT / "tools/fixtures"), str(file), "-o", str(exe)], check=True, timeout=60)
     for device in sorted(devices):
         for mode in ["--immediate", "--candidate", "--legacy", "--scratch"]:
             subprocess.run([str(exe), mode, hex(device)], check=True, timeout=60)

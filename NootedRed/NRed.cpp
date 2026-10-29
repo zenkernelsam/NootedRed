@@ -39,6 +39,7 @@
 #include <IOKit/IOLib.h>
 #include <IOKit/IOTypes.h>
 #include <IOKit/pci/IOPCIDevice.h>
+#include <KernelDisplayEvidence.hpp>
 #include <Kexts.hpp>
 #include <NRed.hpp>
 #include <PenguinWizardry/RuntimeMC.hpp>
@@ -46,6 +47,8 @@
 #include <Regs/NBIO.hpp>
 #include <Regs/SMU.hpp>
 #include <UserMtlDualQuad.hpp>
+#include <UserOpenGL.hpp>
+#include <UserPatchCoordinator.hpp>
 #include <UserSurfaceSync.hpp>
 #include <UserVideoDecode.hpp>
 #include <VCN.hpp>
@@ -82,7 +85,9 @@ void NRed::init()
         {
             singleton().processPatcher();
             UserSurfaceSync::init(patcher);
+            UserOpenGL::init(patcher);
             UserVideoDecode::init(patcher);
+            UserPatchCoordinator::init(patcher);
             UserMtlDualQuad::init(patcher);
             DriverInjector::singleton().processPatcher(patcher);
             PenguinWizardry::RuntimeMCManager::singleton().processPatcher(patcher);
@@ -143,6 +148,13 @@ void NRed::hwLateInit()
             this->enumRevision = 0x1;
         }
     }
+
+    const UInt8 attributesBits = (this->attributes.isPicasso() ? 1U : 0U) | (this->attributes.isRaven2() ? 2U : 0U)
+                                 | (this->attributes.isRenoir() ? 4U : 0U) | (this->attributes.isRenoirE() ? 8U : 0U)
+                                 | (this->attributes.isGreenSardine() ? 16U : 0U);
+    KernelDisplayEvidence::recordGFX9(this->deviceID, this->pciRevision, this->devRevision, this->enumRevision,
+                                      attributesBits, this->fbOffset);
+    KernelDisplayEvidence::publish();
 
     DBGLOG("NRed", "deviceID = 0x%X", this->deviceID);
     DBGLOG("NRed", "pciRevision = 0x%X", this->pciRevision);

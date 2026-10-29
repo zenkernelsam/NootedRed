@@ -22,19 +22,48 @@ COMMON = r'''
 #include <PenguinWizardry/KernelVersion.hpp>
 #include <UserSurfaceSyncResolver.hpp>
 #include <UserVideoDecodeResolver.hpp>
+#include <UserVideoGuardResolver.hpp>
 #include <UserSubmitGuardData.hpp>
 #include <UserLegacyData.hpp>
 #include <VCNCapabilities.hpp>
+#include <VPF/CapabilityState.hpp>
+#include <VPF/DependencyPlanner.hpp>
+#include <VPF/PatchManifestData.hpp>
+#include <VPF/ExecutableTrampolineResource.hpp>
+#include <VPF/MetalTransactionExecutor.hpp>
+#include <VPF/ResolverAdapters.hpp>
+#include <VPF/TransactionExecutor.hpp>
+#include <VPF/VerifiedPatchPlan.hpp>
 using user_addr_t=uint64_t;using mach_vm_address_t=uint64_t;using mach_vm_size_t=uint64_t;
 using vm_map_t=void*;using task_t=void*;using proc_t=void*;using natural_t=unsigned;
 using mach_msg_type_number_t=unsigned;using vm_prot_t=int;using kern_return_t=int;using vm_address_t=uint64_t;
-struct vm_region_submap_short_info_data_64_t {int protection=0,is_submap=0;};using vm_region_recurse_info_t=int*;
+struct vm_region_submap_info_data_64_t {int protection=0,max_protection=0,is_submap=0;unsigned object_id=0;
+ unsigned char share_mode=0;unsigned short shadow_depth=0;};
+using vm_region_submap_short_info_data_64_t=vm_region_submap_info_data_64_t;using vm_region_recurse_info_t=int*;
 constexpr unsigned PAGE_SIZE=4096,VM_REGION_SUBMAP_SHORT_INFO_COUNT_64=12;
 constexpr int TRUE=1,FALSE=0,KERN_SUCCESS=0,KERN_INVALID_ADDRESS=1,KERN_PROTECTION_FAILURE=2,KERN_INVALID_ARGUMENT=4,KERN_FAILURE=5,KERN_RESOURCE_SHORTAGE=3,VM_FLAGS_ANYWHERE=1;
 constexpr int VM_PROT_NONE=0,VM_PROT_READ=1,VM_PROT_WRITE=2,VM_PROT_EXECUTE=4,VM_PROT_COPY=16;
 #define SYSLOG(...) ((void)0)
 #define IONew(T,N) new T[N]
 #define IODelete(P,T,N) delete[] P
+struct IOLock {bool locked=false;};
+static IOLock* IOLockAlloc(){return new IOLock;}
+static void IOLockFree(IOLock* p){delete p;}
+static void IOLockLock(IOLock* p){assert(!p->locked);p->locked=true;}
+static void IOLockUnlock(IOLock* p){assert(p->locked);p->locked=false;}
+constexpr int THREAD_UNINT=0;
+static int IOLockSleep(IOLock*,void*,int){assert(false);return 0;}
+static void IOLockWakeup(IOLock*,void*,bool){}
+static void* current_thread(){static thread_local char identity;return &identity;}
+#include <UserPatchMapGate.hpp>
+namespace UserPatchCoordinator {
+using PatchCallback=int(*)(void*,void*,int);
+inline bool deferModulePatches(){return false;}
+inline void clearDisplay(){}
+inline void clearVideo(){}
+inline void registerDisplay(PatchCallback){}
+inline void registerVideo(PatchCallback){}
+}
 namespace Buffer {template<class T>T* create(size_t n){return new T[n];}template<class T>void deleter(T* p){delete[] p;}}
 template<typename T,size_t N>constexpr size_t arrsize(const T(&)[N]){return N;}
 static std::map<std::string,unsigned> properties;
@@ -50,7 +79,7 @@ namespace VCN {static bool allocated(){return true;}}
 namespace UserSurfaceSync {void init(struct KernelPatcher&);}
 struct KernelPatcher{
  static constexpr int KernelID=0;unsigned routes=0;
- struct RouteRequest{template<typename T>RouteRequest(const char*,T,uint64_t&) {}};
+ struct RouteRequest{template<typename T,typename O>RouteRequest(const char*,T,O&) {}};
  uint64_t solveSymbol(int,const char*){return 1;}void clearError(){}bool routeMultipleLong(int,RouteRequest*,int){routes++;return true;}
 };
 static task_t current_task(){return reinterpret_cast<void*>(1);}
@@ -100,7 +129,7 @@ static kern_return_t query(vm_map_t,uint64_t* a,uint64_t* n,unsigned*,int* p,uns
 static void reset(const UserLegacyCompat::Profile* profile){
  memory.clear();protections.clear();maximums.clear();properties.clear();failProtect.clear();failWrite.clear();
  protects=writes=allocations=deallocations=0;failRead=0;failAllocate=fairPlay=false;
- seenStages=appliedCount=errorCount=0;
+ published={};seenStages=appliedCount=errorCount=0;
  cacheHeader.fill(0);memcpy(cacheHeader.data(),"dyld_v1 x86_64h",16);
  memcpy(cacheHeader.data()+88,profile?profile->uuid:UserSurfaceSyncData::CacheUUID,16);
  if(profile)for(unsigned i=0;i<profile->pageCount;i++){
@@ -119,7 +148,7 @@ MAIN
 
 RENDER = r'''
 int main(){
- for(unsigned major:MAJORS)for(unsigned device:DEVICES){
+ for(unsigned major:{23U})for(unsigned device:DEVICES){
   hostMajor=major;NRed::singleton().device=device;
   const auto* profile=PROFILE;assert(profile);
   KernelPatcher kernel;MODULE::init(kernel);assert(kernel.routes==1);
@@ -141,13 +170,13 @@ int main(){
   reset(profile);failRead=cacheBase+profile->pages[0].offset+256;call();assert(writes==0&&protects==0);
   FAIRPLAY
  }
- puts("PASS actual MODULE legacy bridge: two OS, four devices, full pages, every write/page failure, rollback and idempotency");
+ puts("PASS actual MODULE Sonoma bridge: full pages, every write/page failure, rollback and idempotency");
  GUARD
 }
 '''
 
 GUARD = r'''
- for(unsigned major:{23U,24U,25U}){
+ for(unsigned major:{23U,25U}){
   hostMajor=major;wantRender=true;KernelPatcher kernel;UserSurfaceSync::init(kernel);
   assert(kernel.routes==1&&properties.at("NRedSubmitGuardEnabled")==1&&renderRequested);
   renderRequested=false;
@@ -165,7 +194,9 @@ GUARD = r'''
   setup();failProtect={4,5};call();assert(entryOriginal()&&allocations==deallocations);rx();
   setup();failWrite={2,3,4};call();assert(allocations==1&&deallocations==0&&properties.at("NRedSubmitGuardRollbackFailed")==1);rx();
  }
- puts("PASS actual SubmitGuard: display switch on Darwin 23/24/25; full trampoline identity, failure rollback, RX/max, allocation lifetime");
+ hostMajor=24;KernelPatcher sequoiaKernel;UserSurfaceSync::init(sequoiaKernel);
+ assert(sequoia&&computeScratch&&srdShared&&!legacyProfile&&sequoiaKernel.routes==1);
+ puts("PASS actual SubmitGuard: Sonoma/Tahoe transaction; Sequoia dynamic mode entry; full trampoline identity, failure rollback, RX/max, allocation lifetime");
 '''
 
 FAIRPLAY = r'''
@@ -209,7 +240,7 @@ def main():
     args = parser.parse_args()
     stubs = WORK / 'stubs/IOKit'
     stubs.mkdir(parents=True, exist_ok=True)
-    (stubs / 'IOTypes.h').write_text('#pragma once\n#include <cstdint>\nusing UInt8=uint8_t;using UInt32=uint32_t;using UInt64=uint64_t;\n')
+    (stubs / 'IOTypes.h').write_text('#pragma once\n#include <cstdint>\nusing UInt8=uint8_t;using UInt16=uint16_t;using UInt32=uint32_t;using UInt64=uint64_t;\n')
     util = WORK / 'stubs/Headers'
     util.mkdir(parents=True, exist_ok=True)
     (util / 'kern_util.hpp').write_text('#pragma once\n#include <IOKit/IOTypes.h>\n')
@@ -229,6 +260,21 @@ def main():
         main_code = main_code.replace('FAIRPLAY', '' if module == 'UserSurfaceSync' else FAIRPLAY)
         main_code = main_code.replace('GUARD', GUARD if module == 'UserSurfaceSync' else '')
         main_code = main_code.replace('SUBMIT_OFF', 'submitGuard=false;' if module == 'UserSurfaceSync' else '')
+        if module == 'UserVideoDecode':
+            main_code = r'''
+int main(){
+ hostMajor=23;
+ for(unsigned device:{0x15E7U,0x1636U,0x1638U,0x164CU})for(bool drm:{false,true}){
+  NRed::singleton().device=device;KernelPatcher kernel;UserVideoDecode::init(kernel);
+  assert(kernel.routes==0&&!devicePatches&&properties.at("NRedVCNUserRejected")==6);
+  assert(properties.at("NRedVCNUserSafetyProfileMissing")==1);
+  auto* profile=UserLegacyData::video(23,device);reset(profile);fairPlay=drm;
+  auto pristine=memory;call();assert(memory==pristine&&writes==0&&protects==0&&allocations==0);
+  assert(!properties.contains("NRedVCNUserApplied"));
+ }
+ puts("PASS actual Sonoma video entry: all four devices and both FairPlay states reject missing safety evidence without memory writes");
+}
+'''
         text = COMMON.replace('BODY', body).replace('INIT', init).replace('MAIN', main_code)
         text = text.replace('namespace UserSurfaceSync {void init(struct KernelPatcher&);}',
                             f'struct KernelPatcher;namespace {module} {{void init(KernelPatcher&);}}')

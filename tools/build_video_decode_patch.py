@@ -1,4 +1,5 @@
 """生成指定缓存的 VCN2 核显视频补丁；包含设备识别与已验证的编码协议修正。"""
+import argparse
 import hashlib
 import json
 from pathlib import Path
@@ -7,7 +8,7 @@ import struct
 import subprocess
 
 from audit_video_driver import symbols
-from metal_cache import CACHE, CacheReader, array, macho
+from metal_cache import CacheReader, array, macho
 from vcn_capabilities import devices
 from cache_resolver_data import ResolverData
 
@@ -95,15 +96,40 @@ def identify_payload(native, device_id, va_family):
 
 
 def main():
+    global WORK
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--sequoia-cache', type=Path)
+    parser.add_argument('--safety-major', type=int, choices=[24, 25], help='生成对应系统的第一阶段安全守卫')
+    parser.add_argument('--safety-cache', type=Path)
+    parser.add_argument('--check-safety', action='store_true')
+    args = parser.parse_args()
+    if args.safety_major:
+        import build_video_capability_patch
+        options = ['--major', str(args.safety_major)]
+        if args.safety_cache: options += ['--cache', str(args.safety_cache)]
+        if args.check_safety: options += ['--check']
+        build_video_capability_patch.main(options)
+        return
+    if args.safety_cache or args.check_safety:
+        parser.error('--safety-cache / --check-safety 需要 --safety-major')
+    profile = json.loads((ROOT / 'tools/fixtures/sequoia-compat.json').read_text()) if args.sequoia_cache else None
+    if profile:
+        WORK = ROOT / 'build/sequoia/video'
     WORK.mkdir(parents=True, exist_ok=True)
     capabilities = devices()
     if (0x1638, 5) not in capabilities:
         raise ValueError("缺少既有 Cezanne 配置")
-    cache = CacheReader()
+    cache = CacheReader(args.sequoia_cache, profile['uuid']) if profile else CacheReader()
+    hashes = {n: v['sha256'] for n, v in profile['video'].items()} if profile else HASHES
+    contexts = profile['encodeContexts'] if profile else ENCODE_CONTEXTS
+    gva_address, gva_size, gva_hash, gva_offset, gva_branch = (
+        (profile['gva']['address'], profile['gva']['size'], profile['gva']['sha256'],
+         profile['gva']['offset'], bytes.fromhex(profile['gva']['branch'])) if profile else
+        (GVA_CHOICE_ADDRESS, GVA_CHOICE_SIZE, GVA_CHOICE_SHA256, 0x287, bytes.fromhex('0f84ac010000')))
     records = []
     full_functions = {}
     try:
-        lines = (CACHE / "dyld_shared_cache_x86_64h.map").read_text().splitlines()
+        lines = (cache.directory / "dyld_shared_cache_x86_64h.map").read_text().splitlines()
         image = "/System/Library/Extensions/AMDRadeonVADriver2.bundle/Contents/MacOS/AMDRadeonVADriver2"
         base = int(lines[lines.index(image) + 1].split()[1], 16)
         names, sections = symbols(cache.read, base)
@@ -112,11 +138,13 @@ def main():
             address = names[name]
             end = min(a for a in names.values() if a > address)
             code = cache.read(address, end - address)
-            if hashlib.sha256(code).hexdigest() not in HASHES[name]:
+            expected = hashes[name]
+            actual = hashlib.sha256(code).hexdigest()
+            if actual not in expected if isinstance(expected, (set, frozenset)) else actual != expected:
                 raise ValueError(f"原生函数未核实：{name}")
             context = code
-            if name in ENCODE_CONTEXTS:
-                following, size, digest = ENCODE_CONTEXTS[name]
+            if name in contexts:
+                following, size, digest = contexts[name]
                 if end != names[following] or min(a for a in names.values() if a > end) != address + size:
                     raise ValueError(f"编码锚点边界未核实：{name}")
                 context = cache.read(address, size)
@@ -131,18 +159,31 @@ def main():
             records.append({"label": name, "address": address, "original": original.hex(), "patched": patched.hex(),
                             "fairplayDecode": fairplay_decode})
 
-        gva_choice = cache.read(GVA_CHOICE_ADDRESS, GVA_CHOICE_SIZE)
-        if hashlib.sha256(gva_choice).hexdigest() not in GVA_CHOICE_SHA256:
-            raise ValueError("AppleGVA 选择函数未核实，拒绝生成")
         # 非专用 AMD 机型的原生回退只选择 Intel；无 Intel 时跳到已有的 AMD 插入路径。
         # 此前已检查至少存在一个可用 GPU，因此该出口必有 AMD，其他选择与显式请求不变。
-        # 该回站点是构建相关：steve 参考 build 为 +0x287 jz+0x1AC→jz+0x2A；
-        # 24H32 (15.8.1) 同位置为 `test r15,r15; jz +0x3D6`，AMD 插入路径落点
-        # 未经现场反汇编核实前不生成，保持该站点按未覆盖构建跳过。
-        if gva_choice[0x287:0x28D] == bytes.fromhex("0f84ac010000"):
-            add("AppleGVA_AMDOnlyFallback", GVA_CHOICE_ADDRESS + 0x287,
-                gva_choice[0x287:0x28D], bytes.fromhex("0f842a000000"))
-        else:
+        # 该回站点是构建相关，已核验两个变体：steve 参考 build 的 GVA 选择函数
+        # (+0x287 jz+0x1AC)，以及 24H32 (15.8.1) 的 AppleGVA 内部变体
+        # (+0x283 jz+0x3D6，sequoia-compat profile 同一站点)。两处都按已核验
+        # 函数哈希+站点字节匹配后才生成 +0x2A 跳转；均不匹配时跳过。
+        gva_sites = [
+            (gva_address, gva_size, gva_hash, gva_offset, gva_branch),
+            (0x7FFA06692198, 1704, '1836eb3109e90afac34824654063b2cab953dbb55903cb94f222850a1fa67523',
+             0x283, bytes.fromhex('0f84d6030000')),
+        ]
+        gva_added = False
+        gva_function = None
+        for site_address, site_size, site_hash, site_offset, site_branch in gva_sites:
+            gva_choice = cache.read(site_address, site_size)
+            gva_actual = hashlib.sha256(gva_choice).hexdigest()
+            if gva_actual not in site_hash if isinstance(site_hash, (set, frozenset)) else gva_actual != site_hash:
+                continue
+            if gva_choice[site_offset:site_offset + 6] == site_branch:
+                add("AppleGVA_AMDOnlyFallback", site_address + site_offset,
+                    site_branch, bytes.fromhex("0f842a000000"))
+                gva_function = (site_address, gva_choice)
+                gva_added = True
+                break
+        if not gva_added:
             import sys as _sys
             print("WARNING: AppleGVA AMDOnlyFallback 站点在本构建未核实，跳过", file=_sys.stderr)
 
@@ -156,7 +197,7 @@ def main():
             assert code[offset:offset + 10] == bytes.fromhex("488b86600400008b400c")
             add(name, address + offset, code[offset:offset + 10], bytes.fromhex("b8020000009090909090"),
                 fairplay_decode=True)
-        for name in HASHES:
+        for name in hashes:
             if "VPEi" not in name:
                 continue
             address, code = function(name)
@@ -231,7 +272,7 @@ def main():
                     raise ValueError("FairPlay 解码项不属于 AMD 驱动代码段")
                 decode_mask |= 1 << i
         resolver = ResolverData(cache, WORK)
-        functions = {"AppleGVA_AMDOnlyFallback": (GVA_CHOICE_ADDRESS, gva_choice), **full_functions}
+        functions = {**({"AppleGVA_AMDOnlyFallback": gva_function} if gva_function else {}), **full_functions}
         for record in records:
             label = record["label"]
             if label not in functions:
@@ -251,9 +292,11 @@ def main():
             indices[label] = resolver.add(address, code, bytes(patched))
         locations = [(indices[r["label"]], r["address"]-functions[r["label"]][0]) for r in records]
         header = "// 由 tools/build_video_decode_patch.py 生成，不手工编辑。\n#pragma once\n#include <IOKit/IOTypes.h>\n#include <UserCacheResolver.hpp>\n"
-        header += "namespace UserVideoDecodeData {\n" + array("CacheMagic", cache.magic) + array("CacheUUID", cache.uuid)
+        namespace = 'UserSequoiaVideoData' if profile else 'UserVideoDecodeData'
+        header += f"namespace {namespace} {{\n" + array("CacheMagic", cache.magic) + array("CacheUUID", cache.uuid)
         header += f"inline constexpr UInt64 CacheBase = 0x{cache.base:X}ULL;\n"
-        header += "struct Patch { UInt64 offset; const UInt8* original; const UInt8* patched; UInt32 size; };\n"
+        header += ("using Patch = UserVideoDecodeData::Patch;\n" if profile else
+                   "struct Patch { UInt64 offset; const UInt8* original; const UInt8* patched; UInt32 size; };\n")
         for i, record in enumerate(records):
             address, size = record["address"], len(bytes.fromhex(record["original"]))
             if address // 4096 != (address + size - 1) // 4096:
@@ -296,7 +339,9 @@ def main():
                    '    return nullptr;\n}\n')
         header += resolver.header(locations)
         header += f"inline constexpr UInt32 MaxPatchSize = 448;\ninline constexpr UInt32 PageCount = {pages};\n}}\n"
-        (ROOT / "NootedRed/UserVideoDecodeData.hpp").write_text(header)
+        if profile:
+            header = header.replace('#include <UserCacheResolver.hpp>', '#include <UserVideoDecodeData.hpp>')
+        (ROOT / f"NootedRed/{namespace}.hpp").write_text(header)
         (WORK / "user-patches.json").write_text(json.dumps({"records": records, "pages": pages,
                                                            "device_records": device_records,
                                                            "cacheUUID": cache.uuid.hex()}, indent=2) + "\n")

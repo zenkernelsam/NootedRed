@@ -6,7 +6,7 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-WORK = ROOT / 'build/dynamic-cache/video'
+WORK = ROOT / ('build/dynamic-cache/sequoia-video' if '--sequoia' in sys.argv else 'build/dynamic-cache/video')
 
 
 def main():
@@ -41,16 +41,29 @@ BODY
 static int original(proc_t,SharedRegionCheckArgs*,int* value){*value=123;return 0;}
 static int proc_pid(proc_t){return 217;}static void proc_name(int,char* name,int size){snprintf(name,size,"%s",drmClient?clientName:"VTDecoderXPC");}
 static vm_map_t map(task_t){return reinterpret_cast<void*>(2);}
+static std::map<uint64_t,std::vector<uint8_t>> cleanBlocks;
+static bool cleanPage(uint64_t a){
+ const uint64_t page=a&~uint64_t(4095);
+ auto bi=blocks.upper_bound(page);if(bi==blocks.begin())return false;--bi;
+ auto ci=cleanBlocks.upper_bound(page);if(ci==cleanBlocks.begin())return false;--ci;
+ if(bi->first!=ci->first)return false;
+ const uint64_t off=page-bi->first;
+ return off+4096<=bi->second.size()&&off+4096<=ci->second.size()
+        &&memcmp(bi->second.data()+off,ci->second.data()+off,4096)==0;
+}
 static kern_return_t query(vm_map_t,uint64_t* a,uint64_t* size,unsigned*,int* p,unsigned* count){
  assert(*count==VM_REGION_SUBMAP_SHORT_INFO_COUNT_64);auto*i=reinterpret_cast<vm_region_submap_short_info_data_64_t*>(p);
- i->protection=protections.at(*a);i->is_submap=0;*size=4096;return 0;}
+ i->protection=protections.contains(*a)?protections.at(*a):1;i->is_submap=0;*size=4096;
+ i->object_id=0x1234;i->share_mode=cleanPage(*a)?5:2;i->shadow_depth=0;return 0;}
 static void setup(unsigned id){
- using namespace UserVideoDecodeData;cache(ResolverImages,ResolverFunctions);devicePatches=findDevice(id);assert(devicePatches);
+ using namespace UserVideoDecodeData;cache(ResolverImages,ResolverFunctions,true);cleanBlocks=blocks;
+ devicePatches=findDevice(id);assert(devicePatches);
+ VPF::ResolutionDiagnostics::setEnabled(true);VPF::resolutionCache.init();
  drmClient=false;clientEntitlement=nullptr;drmTouchedPages.clear();
 #ifndef BASELINE
  fairPlayDriverOnly=false;
 #endif
- seenStages=appliedCount=errorCount=0;originalCheck=reinterpret_cast<uint64_t>(original);readUser=reader;writeUser=writer;getTaskMap=map;queryRegion=query;
+ published={};seenStages=appliedCount=errorCount=0;originalCheck=reinterpret_cast<uint64_t>(original);readUser=reader;writeUser=writer;getTaskMap=map;queryRegion=query;
 }
 static void call(){SharedRegionCheckArgs args{0x1000};int value=0;assert(wrappedSharedRegionCheck(drmClient?reinterpret_cast<void*>(217):nullptr,&args,&value)==0&&value==123);}
 int main(){
@@ -135,14 +148,22 @@ int main(){
  setup(0x15e7);UserSharedCache::Input reused{reader,{}};UserVideoDecodeResolver::Plan reusedPlan;
  for(unsigned i=0;i<2;i++)assert(UserCacheResolver::resolve(reused,base,UserVideoDecodeData::ResolverImages,
  UserVideoDecodeData::ResolverFunctions,devicePatches,UserVideoDecodeData::ResolverLocations,reusedPlan.patches,
- &reusedPlan.original[0][0],&reusedPlan.patched[0][0],UserVideoDecodeData::MaxPatchSize));
+ &reusedPlan.original[0][0],&reusedPlan.patched[0][0],UserVideoDecodeData::MaxPatchSize,1));
  // 指针绑定、rel32 溢出与预算耗尽必须拒绝，且解析器本身不写缓存。
  setup(0x15e7);UserSharedCache::Input input{reader,{}};input.reads=32768;UserVideoDecodeResolver::Plan plan;
  assert(!UserCacheResolver::resolve(input,base,UserVideoDecodeData::ResolverImages,UserVideoDecodeData::ResolverFunctions,devicePatches,
  UserVideoDecodeData::ResolverLocations,plan.patches,&plan.original[0][0],&plan.patched[0][0],UserVideoDecodeData::MaxPatchSize));
  printf("PASS %u video dynamic bridge cases: four devices; shifted images/functions/GOT; cross-page rollback; content/metadata/target rejection\n",cases);
 }
-'''.replace('BODY', body)
+'''
+    if '--sequoia' in sys.argv:
+        harness = harness.replace('cache(ResolverImages,ResolverFunctions,true)', 'cache(ResolverImages,ResolverFunctions,false)')
+        harness = harness.replace('UserVideoDecodeData::MaxPatchSize,1)', 'UserVideoDecodeData::MaxPatchSize,0)')
+        harness = harness.replace('UserVideoDecodeData::', 'UserSequoiaVideoData::')
+        harness = harness.replace('using namespace UserVideoDecodeData;', 'using namespace UserSequoiaVideoData;')
+        harness = harness.replace('devicePatches,plan)', 'devicePatches,plan,true)')
+        harness = harness.replace('0x7F87FE', '0x7FE1FE')
+        harness = harness.replace('drmClient=false;clientEntitlement', 'sequoia=true;drmClient=false;clientEntitlement')
     # 从实际源文件中提取的桥接引用进程诊断函数。
     harness = harness.replace('BODY', body)
     harness = harness.replace('static kern_return_t vm_protect', 'static int proc_pid(proc_t);static void proc_name(int,char*,int);\nstatic kern_return_t vm_protect', 1)
@@ -159,4 +180,12 @@ int main(){
 
 
 if __name__ == '__main__':
-    main()
+    if '--baseline' in sys.argv:
+        main()
+    else:
+        # 新事务夹具合并设备补丁与全部安全入口，继续覆盖本文件的重排、
+        # 元数据拒绝、FairPlay 和跨页故障场景，避免用不含守卫的模拟计划测试安装器。
+        import test_vcn_user_bridge
+        sys.argv = [sys.argv[0], '--major', '24' if '--sequoia' in sys.argv else '25'] + (
+            ['--sanitize'] if '--sanitize' in sys.argv else [])
+        test_vcn_user_bridge.main()

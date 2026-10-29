@@ -5,13 +5,13 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-WORK = ROOT / 'build/dynamic-cache/compute'
+WORK = ROOT / ('build/dynamic-cache/sequoia-compute' if '--sequoia' in sys.argv else 'build/dynamic-cache/compute')
 
 
 def main():
     stub = WORK / 'stubs/IOKit'
     stub.mkdir(parents=True, exist_ok=True)
-    (stub / 'IOTypes.h').write_text('#pragma once\n#include <cstdint>\nusing UInt8=uint8_t;using UInt32=uint32_t;using UInt64=uint64_t;\n')
+    (stub / 'IOTypes.h').write_text('#pragma once\n#include <cstdint>\nusing UInt8=uint8_t;using UInt16=uint16_t;using UInt32=uint32_t;using UInt64=uint64_t;\n')
     (stub / 'IOUserClient.h').write_text((ROOT / 'tools/fixtures/fairplay-entitlement.hpp.in').read_text())
     boolean = WORK / 'stubs/libkern/c++'
     boolean.mkdir(parents=True, exist_ok=True)
@@ -53,7 +53,7 @@ static kern_return_t query(vm_map_t,uint64_t* a,uint64_t* size,unsigned*,int* p,
 static uint64_t initAddress,overrideAddress,constructorAddress,settingsAddress,dumpAddress;
 static void setup(unsigned id){
  using namespace UserSurfaceSyncData;
- cache(ScratchResolverData::ResolverImages,ScratchResolverData::ResolverFunctions);
+ cache(ScratchResolverData::ResolverImages,ScratchResolverData::ResolverFunctions,true);
  devicePatches=findDevice(id);assert(devicePatches);renderRequested=computeScratch=legacyBlend=srdShared=true;
  auto image=imageAddresses[0];initAddress=image+0x21f80;overrideAddress=image+0x23ff8;constructorAddress=image+0x28fe5;
  settingsAddress=image+0x26000;dumpAddress=image+0x27000;
@@ -62,7 +62,7 @@ static void setup(unsigned id){
  put(dumpAddress,NativeDump,sizeof(NativeDump));word32(image+0x71064,0x40400000);
  uint64_t targets[]={image+0x71064,settingsAddress,dumpAddress};
  for(auto link:OriginalInitLinks)rel(initAddress,link.offset,targets[link.target]);rel(overrideAddress,6,settingsAddress);
- seenStages=appliedCount=errorCount=windowServerCount=weatherCount=0;
+ published={};seenStages=appliedCount=errorCount=windowServerCount=weatherCount=0;
  originalCheck=reinterpret_cast<uint64_t>(original);readUser=reader;writeUser=writer;getTaskMap=map;queryRegion=query;
 }
 static void call(){SharedRegionCheckArgs args{0x1000};int value=0;assert(wrappedSharedRegionCheck(reinterpret_cast<void*>(217),&args,&value)==0&&value==123);}
@@ -73,7 +73,7 @@ int main(){
   assert(UserSurfaceSyncResolver::resolve(reader,base,device,true,true,plan,true));
   assert(plan.patches[3].offset+base==functionAddresses[0]);
   pages(plan.patches,4);assert(protections.size()==8);auto initial=blocks;
-  call();if(!properties.contains("NRedImmediateSyncDynamicApplied")){for(auto[k,v]:properties)fprintf(stderr,"%s=%u\n",k.c_str(),v);}assert(properties.contains("NRedImmediateSyncDynamicApplied")&&properties.at("NRedComputeScratchWeatherApplied")==1);rx();assert(writes==4);
+  call();if(!properties.contains("NRedImmediateSyncDynamicApplied")){for(auto[k,v]:properties)fprintf(stderr,"%s=%u\n",k.c_str(),v);}assert(properties.contains("NRedImmediateSyncDynamicApplied")&&properties.at("NRedComputeScratchWeatherApplied")==1);assert(properties.at("NRedDisplayVPFPlanVerified")==1&&properties.at("NRedDisplayVPFPlanSites")==4);rx();assert(writes==4);
   for(unsigned i=0;i<4;i++){uint8_t b[UserSurfaceSyncData::MaxPatchSize];assert(reader(base+plan.patches[i].offset,b,plan.patches[i].size)==0);assert(memcmp(b,plan.patches[i].patched,plan.patches[i].size)==0);}
   auto before=writes;call();assert(writes==before&&properties.at("NRedImmediateSyncD07")==1);cases++;
   for(unsigned entry=1;entry<=4;entry++){
@@ -108,7 +108,16 @@ int main(){
  }
  printf("PASS %u compute dynamic bridge cases: six devices; relocated scratch/GOT/VT; eight-page rollback; withdrawn strategy guards\n",cases);
 }
-'''.replace('BODY', body)
+'''
+    if '--sequoia' in sys.argv:
+        start = harness.index('static uint64_t initAddress')
+        harness = harness[:start] + (ROOT / 'tools/fixtures/sequoia-surface-dynamic.cpp.in').read_text()
+        harness = harness.replace('static kern_return_t vm_allocate(vm_map_t,vm_address_t* page,unsigned,int){*page=0;return KERN_FAILURE;}',
+            'static kern_return_t vm_allocate(vm_map_t,vm_address_t* page,unsigned,int){'
+            '*page=0x600000;blocks[*page].resize(4096);protections[*page]=3;return 0;}')
+        harness = harness.replace('static kern_return_t vm_deallocate(vm_map_t,vm_address_t,unsigned){return KERN_SUCCESS;}',
+            'static kern_return_t vm_deallocate(vm_map_t,vm_address_t page,unsigned){blocks.erase(page);protections.erase(page);return 0;}')
+    harness = harness.replace('BODY', body)
     if '--baseline' in sys.argv:
         harness = harness.replace('call();if(!properties.contains("NRedImmediateSyncDynamicApplied"))', 'call();assert(writes==0&&protects==0);puts("PASS baseline reproduces unknown-cache rejection");return 0;if(!properties.contains("NRedImmediateSyncDynamicApplied"))',1)
     file, exe = WORK / 'test.cpp', WORK / 'test'

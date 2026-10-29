@@ -88,6 +88,12 @@ int main()
         forceLoads = 0;
         VCN::init();
         assert(requested == video && forceLoads == unsigned(video));
+        // `-NRedVCN` 兼容别名必须等价于 `-NRedVideoFix`。
+        bootArgs = {"-NRedVCN"};
+        if (display) { bootArgs.insert("-NRedDisplayFix"); }
+        forceLoads = 0;
+        VCN::init();
+        assert(requested && forceLoads == 1);
     }
     IOPCIDevice device;
     IOService other;

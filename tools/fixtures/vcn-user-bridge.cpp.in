@@ -11,11 +11,30 @@
 #include "UserVideoDecodeData.hpp"
 #include "UserVideoDecodeResolver.hpp"
 #include <UserLegacyData.hpp>
+#include <VPF/CapabilityState.hpp>
+#include <VPF/DependencyPlanner.hpp>
+#include <VPF/PatchManifestData.hpp>
+#include <VPF/ExecutableTrampolineResource.hpp>
+#include <VPF/MetalTransactionExecutor.hpp>
+#include <VPF/ResolverAdapters.hpp>
+#include <VPF/TransactionExecutor.hpp>
+#include <VPF/VerifiedPatchPlan.hpp>
 #include "VCNCapabilities.hpp"
+namespace UserPatchCoordinator
+{
+    using PatchCallback = int (*)(void*, void*, int);
+    inline bool deferModulePatches() { return false; }
+    inline void clearDisplay() {}
+    inline void clearVideo() {}
+    inline void registerDisplay(const PatchCallback) {}
+    inline void registerVideo(const PatchCallback) {}
+}    // namespace UserPatchCoordinator
 using user_addr_t=uint64_t;using mach_vm_address_t=uint64_t;using mach_vm_size_t=uint64_t;
 using vm_map_t=void*;using task_t=void*;using proc_t=void*;using natural_t=unsigned;
 using mach_msg_type_number_t=unsigned;using vm_prot_t=int;using kern_return_t=int;
-struct vm_region_submap_short_info_data_64_t {int protection=0,max_protection=0,is_submap=0;};using vm_region_recurse_info_t=int*;
+struct vm_region_submap_info_data_64_t {int protection=0,max_protection=0,is_submap=0;unsigned object_id=0;
+ unsigned char share_mode=0;unsigned short shadow_depth=0;};
+using vm_region_submap_short_info_data_64_t=vm_region_submap_info_data_64_t;using vm_region_recurse_info_t=int*;
 constexpr unsigned PAGE_SIZE=4096,VM_REGION_SUBMAP_SHORT_INFO_COUNT_64=12;
 constexpr int TRUE=1,FALSE=0,KERN_SUCCESS=0,KERN_INVALID_ARGUMENT=4,KERN_FAILURE=5;
 constexpr int VM_PROT_NONE=0,VM_PROT_READ=1,VM_PROT_WRITE=2,VM_PROT_EXECUTE=4,VM_PROT_COPY=16;
@@ -26,18 +45,24 @@ struct NRed {static NRed& singleton(){static NRed n;return n;}void setProp32(con
  unsigned getDeviceID(){return device; }static unsigned device;};unsigned NRed::device=0x1638;
 struct Version{unsigned major(){return majorValue;}unsigned minor(){return minorValue;}static unsigned majorValue,minorValue;};unsigned Version::majorValue=25;unsigned Version::minorValue=6;
 const PenguinWizardry::KernelVersion& currentKernelVersion(){static std::optional<PenguinWizardry::KernelVersion> current;return current.emplace(Version::majorValue,Version::minorValue);}
-static bool flag=true;static bool checkKernelArgument(const char* s){assert(strcmp(s,"-NRedVideoFix")==0||strcmp(s,"-NRedVCN")==0);return flag;}
+static bool flag=true,fvrcEnabled=true;static bool checkKernelArgument(const char* s){
+ assert(strcmp(s,"-NRedVideoFix")==0||strcmp(s,"-NRedVCN")==0||strcmp(s,"-NRedNoFVRC")==0);
+ if(strcmp(s,"-NRedNoFVRC")==0)return !fvrcEnabled;
+ return flag;}
 namespace VCN { static bool active=true; bool allocated(){return active;} }
 #define IONew(T,N) (new T[N])
 #define IODelete(P,T,N) delete[] P
 constexpr int KERN_RESOURCE_SHORTAGE=3;
 struct KernelPatcher{
  static constexpr int KernelID=0;int solves=0,routes=0;bool missing=false,routeOK=true;
- struct RouteRequest{template<typename T>RouteRequest(const char*,T,uint64_t&) {}};
- uint64_t solveSymbol(int,const char*){solves++;return missing?0:1;}void clearError(){}
- bool routeMultipleLong(int,RouteRequest*,int count){assert(count==1);routes++;return routeOK;}
+ static inline UInt8 destroyCode[16]{};
+ static void destroy(vm_map_t){}
+ struct RouteRequest{const char* symbol;uint64_t from=0,*org;template<typename T,typename O>RouteRequest(const char* s,T,O& o):symbol(s),org(reinterpret_cast<uint64_t*>(&o)) {}};
+ uint64_t solveSymbol(int,const char* s){solves++;return missing?0:(strcmp(s,"_vm_map_destroy")==0?reinterpret_cast<uint64_t>(destroyCode):1);}void clearError(){}
+ bool routeMultipleLong(int,RouteRequest* request,int count){assert(count==1);routes++;if(routeOK&&strcmp(request->symbol,"_vm_map_destroy")==0)*request->org=reinterpret_cast<uint64_t>(destroy);return routeOK;}
 };namespace UserVideoDecode{void init(KernelPatcher&);}
 static task_t current_task(){return reinterpret_cast<void*>(1);}
+static void* current_thread(){static thread_local char identity;return &identity;}
 #include <UserPatchPolicy.hpp>
 static bool isWindowServer=false;
 static const char* processName="Other";
@@ -88,7 +113,7 @@ static int writer(const void* p,uint64_t address,size_t size){
 }
 static void reset(){
  protection.clear();maxProtection.clear();properties.clear();failProtect.clear();touchedPages.clear();protectCalls=writeCalls=failWrite=originalResult=regionMode=0;
- invalidCache=noMap=false;seenStages=appliedCount=errorCount=0;isWindowServer=false;processName="Other";
+ invalidCache=noMap=false;published={};seenStages=appliedCount=errorCount=0;isWindowServer=false;processName="Other";
  clientEntitlement=nullptr;trueEntitlement.releases=falseEntitlement.releases=0;entitlementQueries=0;
  for(size_t i=0;i<MaxN;i++){auto& p=active()[i];memcpy(code[i].data(),p.original,p.size);if(i<N){const auto page=(base+p.offset)&~uint64_t(4095);protection[page]=5;maxProtection[page]=5;}}
  originalCheck=reinterpret_cast<uint64_t>(original);getTaskMap=map;queryRegion=query;readUser=reader;writeUser=writer;
@@ -97,7 +122,11 @@ static void call(proc_t process=nullptr){SharedRegionCheckArgs args{0x1000};int 
 static void bytes(bool patched){for(size_t i=0;i<N;i++){auto& p=active()[i];assert(memcmp(code[i].data(),patched?p.patched:p.original,p.size)==0);}}
 static void rx(){for(auto [a,p]:protection){assert(p==5);assert(maxProtection.at(a)==5);}}
 int main(){
- for(bool enabled:{false,true}){flag=enabled;KernelPatcher p;UserVideoDecode::init(p);assert(p.routes==int(enabled));}
+ KernelPatcher policy;
+ UserVideoDecode::init(policy);assert(properties.at("NRedFVRCEnabled")==1&&properties.at("NRedFVRCCacheReady")==1);
+ fvrcEnabled=false;UserVideoDecode::init(policy);assert(properties.at("NRedFVRCEnabled")==0);
+ fvrcEnabled=true;
+ for(bool enabled:{false,true}){flag=enabled;KernelPatcher p;UserVideoDecode::init(p);assert(p.routes==2*int(enabled));}
  flag=true;
  for(unsigned id=0;id<=0xffff;id++){
   const bool accepted=id==0x15E7||id==0x1636||id==0x1638||id==0x164C;
@@ -112,7 +141,7 @@ int main(){
  NRed::device=0x1638;
  for(unsigned major:{22U,23U,24U,25U,26U})for(unsigned minor:{0U,6U,7U}){
   Version::majorValue=major;Version::minorValue=minor;KernelPatcher checked;UserVideoDecode::init(checked);
-  assert(checked.routes==int(major>=23 && major<=25));
+  assert(checked.routes==2*int(major>=23 && major<=25));
   if(major>=23&&major<=25){
    assert(fairPlayDriverOnly&&properties.at("NRedDRMVideoEnabled")==1&&properties.at("NRedDRMVideoRevision")==4);
    assert(properties.at("NRedDRMVideoMask")==unsigned(major==25?UserVideoDecodeData::FairPlayDecodeMask:0x1FFF));
@@ -120,7 +149,7 @@ int main(){
  }
  Version::majorValue=25;Version::minorValue=6;
  for(unsigned host:{0x15E7U,0x1636U,0x1638U,0x164CU}){
-  NRed::device=host;KernelPatcher enabled;UserVideoDecode::init(enabled);assert(enabled.routes==1);
+  NRed::device=host;KernelPatcher enabled;UserVideoDecode::init(enabled);assert(enabled.routes==2);
   assert(devicePatches==UserVideoDecodeData::findDevice(host));
   assert(properties.at("NRedVCNGeneration")==0x0202 && properties.at("NRedVCNDeviceID")==host);
  reset();call();bytes(true);rx();assert(writeCalls==N&&properties.at("NRedVCNUserApplied")==1);
@@ -147,7 +176,7 @@ int main(){
  assert(writeCalls==N&&!properties.contains("NRedVCNFairPlaySkipped")&&falseEntitlement.releases==1);
  }
  // 独立预期：只写驱动侧解码项，AppleGVA 与四项编码修正保持原始字节，且不改变这些页的权限。
- constexpr unsigned decodeMask=UserVideoDecodeData::FairPlayDecodeMask;
+ constexpr unsigned decodeMask=0x7F87FE;
  auto selected=[](size_t i){return (decodeMask&(1U<<i))!=0;};
  auto selectedBytes=[&](bool patched){for(size_t i=0;i<N;i++){
   auto& p=active()[i];assert(memcmp(code[i].data(),patched&&selected(i)?p.patched:p.original,p.size)==0);
@@ -207,11 +236,11 @@ int main(){
  }
  for(unsigned major:{23U,24U}){
   Version::majorValue=major;KernelPatcher p;UserVideoDecode::init(p);
-  // 旧系统同样进入 FairPlay 策略；外来 UUID 的缓存必须拒绝（legacy 不匹配则落到 resolver，仍失败）。
+  // 旧系统同样进入 FairPlay 策略，但本夹具中的 Tahoe 缓存必须拒绝。
   for(const char* name:{"Music","TV","Other"}){
-   reset();invalidCache=true;processName=name;clientEntitlement=kOSBooleanTrue;call(reinterpret_cast<void*>(970));
+   reset();processName=name;clientEntitlement=kOSBooleanTrue;call(reinterpret_cast<void*>(970));
    assert(writeCalls==0&&protectCalls==0&&properties.at("NRedDRMVideoState")==1);
-   assert(properties.at("NRedVCNUserLegacyRejected")==1&&!properties.contains("NRedVCNFairPlaySkipped"));bytes(false);rx();
+   assert(properties.at(major==23?"NRedVCNUserLegacyRejected":"NRedVCNUserDynamicRejected")==1&&!properties.contains("NRedVCNFairPlaySkipped"));bytes(false);rx();
   }
  }
  Version::majorValue=25;flag=false;{KernelPatcher disabled;UserVideoDecode::init(disabled);assert(disabled.solves==0&&disabled.routes==0);}

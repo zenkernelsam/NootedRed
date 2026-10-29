@@ -33,6 +33,7 @@
 #include <Headers/kern_mach.hpp>
 #include <Headers/kern_patcher.hpp>
 #include <Headers/kern_util.hpp>
+#include <KernelDisplayEvidence.hpp>
 #include <IOKit/IOReturn.h>
 #include <IOKit/IOTypes.h>
 #include <IOKit/acpi/IOACPIPlatformExpert.h>
@@ -207,6 +208,11 @@ void X6000FB::processKext(KernelPatcher& patcher, size_t id, mach_vm_address_t s
     if (kextRadeonX6000Framebuffer.loadIndex != id) { return; }
 
     NRed::singleton().hwLateInit();
+    KernelDisplayEvidence::captureKext(KernelDisplayEvidence::Kext::X6000FB, slide, size);
+    KernelDisplayEvidence::recordFramebuffer(
+        currentKernelVersion().major(), NRed::singleton().getAttributes().isRenoir(),
+        NRed::singleton().getAttributes().isPicasso(), NRed::singleton().getAttributes().isRenoirE());
+    KernelDisplayEvidence::publish();
 
     CAILAsicCapsEntry*                   orgAsicCapsTable       = nullptr;
     void*                                orgAmdAsicInfoNavi10VT = nullptr;

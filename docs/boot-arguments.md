@@ -1,6 +1,6 @@
 # 修复功能启动参数
 
-本版只使用以下三个入口，不兼容此前的修复启动参数。
+本版使用以下三个修复入口，不兼容此前的修复启动参数。
 
 | 参数 | 功能 | 省略时 |
 | --- | --- | --- |
@@ -18,8 +18,13 @@
 `=2` 沿用强制模式，仍须核验固件调用结果和报告来源；本机固件的来源读取固定返回 2，
 不能仅凭该值证明控制权切换。`=0`、其他无效值或省略参数均不启动 EC 服务。
 
-显示开关在 macOS 14/15 启用 LegacyBlend 和 SubmitGuard，在 26 启用
+显示开关在 macOS 14 启用 LegacyBlend 和 SubmitGuard，在 15/26 启用
 SrdShared、LegacyBlend、ComputeScratch 和 SubmitGuard，保留原生同步策略，不再启用 ImmediateSync。
+三个系统的显示开关还启用 OpenGL SE/CU 和条件 DualQuad 修复，无需新增参数。
+OpenGL 在当前已验证页面内匹配完整修复块及引用，不主动读取驱动文件或启动准备任务。
+`NRedOpenGLRevision=5`、`NRedOpenGLPageLocal=1` 标记此实现；加载 OpenGL 应用后检查
+`NRedOpenGLSEApplied` / `NRedOpenGLDualQuadApplied`。`DynamicApplied` 仅标记两项均经动态路径命中。
+详细匹配边界与本机页面校验见 [OpenGL 修复](opengl-display-fix.md)。
 `NRedDisplayFixVersion=2` 标记这个组合；`NRedImmediateSync*` 继续作为历史页面事务诊断名称，
 `NRedImmediateSyncDisabled=1` 表示立即同步修复未启用。
 **本版不含 HDRIntegerFilter 候选的运行代码与补丁数据。**
@@ -27,6 +32,12 @@ SrdShared、LegacyBlend、ComputeScratch 和 SubmitGuard，保留原生同步策
 [多系统适配](macos-multi-os-compat.md)。
 
 显示、视频和 EC 三项可独立启用，关闭某一项只需移除对应参数并重启。
+共享缓存解析位置缓存（FVRC）默认启用，无需添加 `-NRedFVRC`。
+`-NRedNoFVRC` 可关闭该缓存并回退完整扫描，不改变显示／视频修复开关。
+映射身份使用短 VM 查询，保留共享对象、COW、完整函数及引用核验；不统计共享区域的驻留页。
+`NRedFVRCEnabled=1` 和 `NRedFVRCCacheReady=1` 表示缓存策略及存储已启用，
+实际复用可检查 `NRedFVRCDisplayHot`、`NRedFVRCSubmitHot`、`NRedFVRCDecodeHot`、`NRedFVRCGuardHot`。
+
 插件全局关闭 `-NRedOff`、调试参数及上游的 `AMDBacklight` 设置不在本次更名范围内；
 `AMDBacklight=0` 仍会阻止 EC 服务启动。
 
@@ -51,8 +62,8 @@ NRedECBacklight=1 NRedECBacklight=2
 FairPlay 兼容随 `-NRedVideoFix` 默认启用，在 macOS 14/15/26 / Darwin 23/24/25 的
 受支持 VCN 2.2 APU 上生效，不再需要 `-NRedDRMVideo`。所有持有 `com.apple.private.fpsd.client=true`
 权限的进程统一应用 AMD 驱动侧解码子集及内容保护工厂 PSP 适配，不再按 Music／TV 等进程名区分；
-AppleGVA 与编码代码保持原样。14/15 按各自完整原始页面核验，选择 13 项 AMD 解码补丁；
-26 保留 18 项及原有动态匹配。三个系统采用相同策略，但补丁条目随已核实的版本数据不同。
+AppleGVA 与编码代码保持原样。14 按完整原始页面核验，选择 13 项 AMD 解码补丁；
+15/26 选择 18 项并支持动态匹配。三个系统采用相同策略，但补丁条目随已核实的版本数据不同。
 `NRedDRMVideoRevision=4` 标识三系统统一权限策略，不代表 DRM 视频已修复。
 既有 Music 实测为普通音乐正常、受保护 MV 有声且进度推进，但视频仍黑屏；统一版本的
 Music／TV 实机回归尚待验证。范围、诊断和验证步骤见 [FairPlay PSP 兼容说明](fairplay-psp-compatibility.md)。

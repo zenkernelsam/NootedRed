@@ -8,7 +8,7 @@ from metal_cache import CACHE, CacheReader
 
 ROOT = Path(__file__).resolve().parents[1]
 WORK = ROOT / "build/vcn"
-EXPECTED = "d7c579bce55c5724ec241f7f9abece9d0f23b1c30178d2f539fc0cabf41dc0bd"
+EXPECTED = "dd95fd9d1ea9740465bcefa6d68770a0ebbb6e8161e97939be19ff1c1671737e"
 
 
 def byte_lines(data):
