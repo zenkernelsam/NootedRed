@@ -234,11 +234,34 @@ IOReturn Backlight::wrapGetAttributeForConnection(IOService* framebuffer, IOInde
         *value = NRedECBacklight::currentLevel();
         return kIOReturnSuccess;
     }
-    const auto ret = FunctionCast(wrapGetAttributeForConnection, singleton().orgGetAttributeForConnection)(
+    auto ret = FunctionCast(wrapGetAttributeForConnection, singleton().orgGetAttributeForConnection)(
         framebuffer, connectIndex, attribute, value);
-    if (attribute != kIOAppleBacklightAttribute) { return ret; }
-    *value = __atomic_load_n(&singleton().curBacklightLvl, __ATOMIC_ACQUIRE);
-    return kIOReturnSuccess;
+    if (attribute == kIOAppleBacklightAttribute) {
+        if (value != nullptr) { *value = __atomic_load_n(&singleton().curBacklightLvl, __ATOMIC_ACQUIRE); }
+        return kIOReturnSuccess;
+    }
+
+    if (attribute == kConnectionEnable && connectIndex == 0 && (ret != kIOReturnSuccess || (value != nullptr && *value == 0))) {
+        const char* const loc = framebuffer != nullptr ? framebuffer->getLocation() : nullptr;
+        const bool isFB0      = (loc == nullptr || (loc[0] == '0' && loc[1] == '\0'));
+        if (isFB0 && singleton().embeddedPanelLink != nullptr) {
+            // Early boot race condition on laptops with internal eDP panels:
+            // When WindowServer starts rapidly (e.g. SetApfsTrimTimeout=0, fast NVMe, non-verbose boot),
+            // WindowServer queries kConnectionEnable while asynchronous eDP link training is still settling.
+            // Rather than immediately reporting "no devices" (which triggers CoreDisplay assertion abort),
+            // briefly poll with bounded delays (up to ~100ms) for link training to complete.
+            for (int retry = 0; retry < 5; retry++) {
+                IOSleep(20);
+                ret = FunctionCast(wrapGetAttributeForConnection, singleton().orgGetAttributeForConnection)(
+                    framebuffer, connectIndex, attribute, value);
+                if (ret == kIOReturnSuccess && value != nullptr && *value != 0) {
+                    break;
+                }
+            }
+        }
+    }
+
+    return ret;
 }
 
 void* Backlight::wrapLinkCreate(void* data)

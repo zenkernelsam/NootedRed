@@ -96,9 +96,12 @@ struct IOService : OSObject
     virtual void                       stop(IOService*) { }
     virtual void                       free() { }
     virtual IOWorkLoop*                getWorkLoop() const { return nullptr; }
+    virtual const char*                getLocation() const { return nullptr; }
     void                               setProperty(const char* key, const char* value) { strings[key] = value; }
     void                               setProperty(const char* key, UInt64 value, unsigned) { numbers[key] = value; }
 };
+constexpr IOSelect kConnectionEnable = 'cenb';
+inline void        IOSleep(unsigned) { }
 struct IOTimerEventSource : OSObject
 {
     using Action = void        (*)(OSObject*, IOTimerEventSource*);

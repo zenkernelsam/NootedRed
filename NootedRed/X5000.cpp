@@ -23,6 +23,7 @@
 #include <AMDGFX9DCN1Display.hpp>
 #include <AMDGFX9DCN2Display.hpp>
 #include <AMDGFX9DCNDisplay.hpp>
+#include <Backlight.hpp>
 #include <GPUDriversAMD/Accel/HWDisplay.hpp>
 #include <GPUDriversAMD/Accel/HWEngine.hpp>
 #include <GPUDriversAMD/AddrLib.hpp>
@@ -77,6 +78,160 @@ static const UInt8 kCreateAccelChannelsPatched[]  = {0x8D, 0x44, 0x09, 0x01};
 // Ditto, Mojave.
 static const UInt8 kCreateAccelChannelsOriginal10_14[] = {0x8D, 0x04, 0x09, 0x8D, 0x4C, 0x09, 0x02};
 static const UInt8 kCreateAccelChannelsPatched10_14[]  = {0x8D, 0x04, 0x09, 0x8D, 0x4C, 0x09, 0x01};
+
+namespace
+{
+    // Fixes an unsigned 32-bit underflow in IOAccelMemoryAllocator2::allocPages
+    // when non-contiguous allocation (`isContiguousOnly == false`) encounters a
+    // small free hole whose aligned start `(holeStart + align - 1) & ~(align - 1)`
+    // exceeds `holeEnd`. (Ported from weachy c9467c9.)
+    void patchIOAccelAllocPages(KernelPatcher& patcher, const size_t id, const mach_vm_address_t slide,
+                                const size_t size)
+    {
+        const auto allocNonContig =
+            patcher.solveSymbol(id,
+                                "__ZN26AMDRadeonX5000_AMDHWMemory21allocateNonContiguousEP16AMDMemoryElementyyyybby15_"
+                                "eOP_ORIGINATOR9_eOP_TYPE",
+                                slide, size);
+        if (allocNonContig == 0) {
+            patcher.clearError();
+            return;
+        }
+
+        const auto* const fnBytes    = reinterpret_cast<const UInt8*>(allocNonContig);
+        mach_vm_address_t allocPages = 0;
+        for (size_t i = 0; i < 0x110; ++i) {
+            // Match `callq allocPages (e8 rel32); addq $0x10, %rsp (48 83 c4 10); testb %al, %al (84 c0)`.
+            // Across macOS 13-26, allocPages is the only 8-argument call in allocateNonContiguous(yyyy)
+            // that pops 16 bytes of stack arguments and tests %al.
+            if (fnBytes[i] == 0xE8 && fnBytes[i + 5] == 0x48 && fnBytes[i + 6] == 0x83 && fnBytes[i + 7] == 0xC4 &&
+                fnBytes[i + 8] == 0x10 && fnBytes[i + 9] == 0x84 && fnBytes[i + 10] == 0xC0) {
+                SInt32 rel = 0;
+                memcpy(&rel, fnBytes + i + 1, sizeof(rel));
+                allocPages = allocNonContig + i + 5 + static_cast<mach_vm_address_t>(static_cast<SInt64>(rel));
+                break;
+            }
+        }
+        if (allocPages == 0) { return; }
+
+        auto* const targetBytes = reinterpret_cast<UInt8*>(allocPages);
+        if (targetBytes[0] != 0x55 || targetBytes[1] != 0x48 || targetBytes[2] != 0x89 || targetBytes[3] != 0xE5) {
+            return;
+        }
+
+        for (size_t off = 0x40; off < 0x160; ++off) {
+            // Match across macOS 13-26:
+            //   +0: 41 29 C9              subl %ecx, %r9d
+            //   +3: 44 23 4D <disp8>      andl <disp8>(%rbp), %r9d
+            //   +7: 0F 84/8E <rel32>      je / jle <skip_hole>
+            //  +13: 4D 8D 34 09           leaq (%r9,%rcx), %r14
+            if (targetBytes[off] == 0x41 && targetBytes[off + 1] == 0x29 && targetBytes[off + 2] == 0xC9 &&
+                targetBytes[off + 3] == 0x44 && targetBytes[off + 4] == 0x23 && targetBytes[off + 5] == 0x4D &&
+                targetBytes[off + 7] == 0x0F && (targetBytes[off + 8] == 0x84 || targetBytes[off + 8] == 0x8E) &&
+                targetBytes[off + 13] == 0x4D && targetBytes[off + 14] == 0x8D && targetBytes[off + 15] == 0x34 &&
+                targetBytes[off + 16] == 0x09) {
+                if (targetBytes[off + 8] == 0x84 &&
+                    MachInfo::setKernelWriting(true, KernelPatcher::kernelWriteLock) == KERN_SUCCESS) {
+                    targetBytes[off + 8] = 0x8E;
+                    MachInfo::setKernelWriting(false, KernelPatcher::kernelWriteLock);
+                    SYSLOG("X5000", "Patched IOAccelMemoryAllocator2::allocPages non-contiguous hole underflow");
+                }
+                return;
+            }
+        }
+    }
+
+    // Fixes AMDAccelVideoContext::processCommand jumping to the loop-completion
+    // success block (`this->0x644 = 0`) instead of the error epilogue (`this->0x644 = -6`)
+    // when `fetchResource()` fails to prepare a video buffer. (Ported from weachy c9467c9.)
+    void patchVideoProcessCommand(KernelPatcher& patcher, const size_t id, const mach_vm_address_t slide,
+                                  const size_t size, const char* const procCmdSym, const char* const fetchResSym)
+    {
+        const auto procCmd  = patcher.solveSymbol(id, procCmdSym, slide, size);
+        const auto fetchRes = patcher.solveSymbol(id, fetchResSym, slide, size);
+        if (procCmd == 0 || fetchRes == 0) {
+            patcher.clearError();
+            return;
+        }
+
+        auto* const fnBytes = reinterpret_cast<UInt8*>(procCmd);
+        for (size_t i = 0; i < 0x280; ++i) {
+            if (fnBytes[i] != 0xE8) { continue; }
+            SInt32 callRel = 0;
+            memcpy(&callRel, fnBytes + i + 1, sizeof(callRel));
+            if (procCmd + i + 5 + static_cast<mach_vm_address_t>(static_cast<SInt64>(callRel)) != fetchRes) {
+                continue;
+            }
+
+            for (size_t j = i + 5; j < i + 20; ++j) {
+                if (fnBytes[j] == 0x0F && fnBytes[j + 1] == 0x84) {
+                    SInt32 jeRel = 0;
+                    memcpy(&jeRel, fnBytes + j + 2, sizeof(jeRel));
+                    const ptrdiff_t jeTargetOff = static_cast<ptrdiff_t>(j) + 6 + jeRel;
+                    if (jeTargetOff <= 0 || jeTargetOff >= 0x580) { return; }
+
+                    for (size_t m = static_cast<size_t>(jeTargetOff); m < static_cast<size_t>(jeTargetOff) + 0x30;
+                         ++m) {
+                        if (fnBytes[m] == 0x48 && fnBytes[m + 1] == 0x81 && fnBytes[m + 2] == 0xC4) {
+                            const auto newRel = static_cast<SInt32>(m - (j + 6));
+                            if (newRel != jeRel &&
+                                MachInfo::setKernelWriting(true, KernelPatcher::kernelWriteLock) == KERN_SUCCESS) {
+                                memcpy(fnBytes + j + 2, &newRel, sizeof(newRel));
+                                MachInfo::setKernelWriting(false, KernelPatcher::kernelWriteLock);
+                                SYSLOG("X5000",
+                                       "Patched AMDAccelVideoContext::processCommand fetchResource failure exit");
+                            }
+                            return;
+                        }
+                    }
+                    return;
+                }
+            }
+            return;
+        }
+    }
+
+    // Fixes AMDSWScheduler::advance dereferencing a null peer channel pointer
+    // on single-GPU APUs (which have no crossfire peer GPU: 0x68(%r12) == NULL),
+    // causing a kernel page fault at CR2: 0x48. (Ported from weachy c9467c9.)
+    void patchSWSchedulerAdvance(KernelPatcher& patcher, const size_t id, const mach_vm_address_t slide,
+                                 const size_t size)
+    {
+        const auto advanceSym =
+            patcher.solveSymbol(id,
+                                "__ZN29AMDRadeonX5000_AMDSWScheduler7advanceERNS_12HwChannelCtxE",
+                                slide, size);
+        if (advanceSym == 0) {
+            patcher.clearError();
+            return;
+        }
+
+        auto* const fnBytes = reinterpret_cast<UInt8*>(advanceSym);
+        // Across macOS 15 - 26:
+        // Match:
+        //   49 8b 7c 24 68       movq 0x68(%r12), %rdi
+        //   48 83 7f 48 00       cmpq $0x0, 0x48(%rdi)   <-- crashes when %rdi (peer channel) is null on APU
+        // We replace "cmpq $0x0, 0x48(%rdi)" (48 83 7f 48 00) with
+        // "testq %rdi, %rdi; nop; nop"       (48 85 ff 90 90) so null %rdi safely takes the jump.
+        for (size_t i = 0x200; i < 0x380; ++i) {
+            if (fnBytes[i] == 0x49 && fnBytes[i + 1] == 0x8B && fnBytes[i + 2] == 0x7C &&
+                fnBytes[i + 3] == 0x24 && fnBytes[i + 4] == 0x68 &&
+                fnBytes[i + 5] == 0x48 && fnBytes[i + 6] == 0x83 && fnBytes[i + 7] == 0x7F &&
+                fnBytes[i + 8] == 0x48 && fnBytes[i + 9] == 0x00) {
+                if (MachInfo::setKernelWriting(true, KernelPatcher::kernelWriteLock) == KERN_SUCCESS) {
+                    fnBytes[i + 5] = 0x48;
+                    fnBytes[i + 6] = 0x85;
+                    fnBytes[i + 7] = 0xFF;
+                    fnBytes[i + 8] = 0x90;
+                    fnBytes[i + 9] = 0x90;
+                    MachInfo::setKernelWriting(false, KernelPatcher::kernelWriteLock);
+                    SYSLOG("X5000", "Patched AMDSWScheduler::advance null peer channel dereference");
+                }
+                return;
+            }
+        }
+    }
+}    // namespace
 
 static X5000 moduleInstance;
 
@@ -151,7 +306,7 @@ X5000::X5000()
             this->hasGetAllClockLimitsField  = 0xBE;
             this->dccDisplayableSupportField = 0xC0;
             this->hwChannelHWInterfaceField  = 0x20;
-            if (currentKernelVersion() >= MACOS_14) { this->hwChannelSubmitCommandBuffer = 0x188; }
+            if (currentKernelVersion() >= MACOS_14_4) { this->hwChannelSubmitCommandBuffer = 0x188; }
             else {
                 this->hwChannelSubmitCommandBuffer = 0x190;
             }
@@ -213,22 +368,40 @@ void X5000::processKext(KernelPatcher& patcher, const size_t id, const mach_vm_a
     PANIC_COND(!PenguinWizardry::PatternRouteRequest::routeAll(patcher, id, requests, slide, size), "X5000",
                "Failed to route symbols");
 
+    patchIOAccelAllocPages(patcher, id, slide, size);
+    patchVideoProcessCommand(
+        patcher, id, slide, size,
+        "__ZN35AMDRadeonX5000_AMDAccelVideoContext14processCommandEPj16VideoCommandTypeS0_j",
+        "__ZN35AMDRadeonX5000_AMDAccelVideoContext13fetchResourceEP22_AMDVideoResourceParamP21_AMDVideoResourceInfo");
+    patchSWSchedulerAdvance(patcher, id, slide, size);
+
     if (currentKernelVersion() >= MACOS_11) {
         PenguinWizardry::PatternSolveRequest solveRequest{"__ZN30AMDRadeonX5000_AMDGFX9Hardware15notifyGfxAccessEv",
                                                           this->notifyGfxAccess};
         PANIC_COND(!solveRequest.solve(patcher, id, slide, size), "X5000", "Failed to resolve notifyGfxAccess");
         // __ZTV 符号含 offset-to-top 和 RTTI；字段偏移以对象的虚表地址点为基准。
         auto* const pm4ComputeChannelVTable = static_cast<UInt8*>(pm4ComputeChannelVT) + 2 * sizeof(void*);
-        if (this->hwChannelSubmitCommandBuffer(pm4ComputeChannelVTable) != this->orgPM4SubmitCommandBuffer) {
+        // Dynamically probe the vtable for the submitCommandBuffer slot rather
+        // than trusting the static field offset — the slot moved between macOS
+        // releases (0x180 → 0x188 → 0x190) and an exact content match is safer.
+        // (Dynamic scan ported from weachy c9467c9.)
+        mach_vm_address_t* submitSlot = nullptr;
+        for (size_t off = 0x170; off <= 0x1B0; off += sizeof(mach_vm_address_t)) {
+            auto* const candidate = reinterpret_cast<mach_vm_address_t*>(pm4ComputeChannelVTable + off);
+            if (*candidate == this->orgPM4SubmitCommandBuffer) {
+                submitSlot = candidate;
+                break;
+            }
+        }
+        if (submitSlot == nullptr) {
             KernelDisplayEvidence::recordComputeVTable(false);
-            SYSLOG("X5000", "Compute submit hook skipped: vtable slot does not match resolved symbol");
+            SYSLOG("X5000", "Compute submit hook skipped: no vtable slot matches resolved symbol");
         }
         else {
             KernelDisplayEvidence::recordComputeVTable(true);
             PANIC_COND(MachInfo::setKernelWriting(true, KernelPatcher::kernelWriteLock) != KERN_SUCCESS, "X5000",
                        "Failed to enable kernel writing");
-            this->hwChannelSubmitCommandBuffer(pm4ComputeChannelVTable) =
-                reinterpret_cast<mach_vm_address_t>(computeSubmitCommandBuffer);
+            *submitSlot = reinterpret_cast<mach_vm_address_t>(computeSubmitCommandBuffer);
             MachInfo::setKernelWriting(false, KernelPatcher::kernelWriteLock);
         }
         KernelDisplayEvidence::publish();
@@ -607,9 +780,27 @@ bool X5000::fixedGetDisplayInfo(AMDRadeonX5000_AMDHWDisplay* const self, const U
                                              &self->viewportHeights()[fbIndex]);
 
     uintptr_t isOnline = 0;
-    fbInfo->isOnline =
-        fb->getAttributeForConnection(static_cast<IOIndex>(fbIndex), kConnectionEnable, &isOnline) == kIOReturnSuccess
-        && isOnline != 0;
+    // In IOKit, an IOFramebuffer instance represents a single display pipe/connector,
+    // so its internal connection index is typically 0. Passing the card-level fbIndex
+    // (1, 2, 3...) causes getAttributeForConnection to return kIOReturnBadArgument.
+    // Query connection index 0 first, and fallback to fbIndex if connection 0 fails.
+    IOReturn onlineRet = fb->getAttributeForConnection(0, kConnectionEnable, &isOnline);
+    if (onlineRet != kIOReturnSuccess && fbIndex != 0) {
+        onlineRet = fb->getAttributeForConnection(static_cast<IOIndex>(fbIndex), kConnectionEnable, &isOnline);
+    }
+
+    bool online = (onlineRet == kIOReturnSuccess && isOnline != 0);
+
+    // Fallback guard for early-boot race conditions:
+    // If the kernel and WindowServer start quickly (e.g. SetApfsTrimTimeout=0, fast NVMe, non-verbose boot),
+    // WindowServer queries display status while asynchronous DCN/eDP link training is still settling.
+    // When CRT is enabled for the primary built-in display (fbIndex == 0 && hasEmbeddedPanel()), guarantee online status
+    // to prevent CoreDisplay from logging "Setting offline display 0x00000000 main" and aborting WindowServer.
+    if (!online && isCRTEnabled && fbIndex == 0 && Backlight::singleton().hasEmbeddedPanel()) {
+        online = true;
+    }
+
+    fbInfo->isOnline = online;
 
     self->fedsParamInfo()[fbIndex].crtIndex = 0;
     self->fedsParamInfo()[fbIndex].scaledW  = 0;
