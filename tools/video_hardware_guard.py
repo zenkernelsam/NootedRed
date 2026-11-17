@@ -5,12 +5,20 @@ import subprocess
 
 
 def guarded_service(registry, processes, service='Encoder'):
-    """同时核验核显、两个守卫版本以及仍在运行的实际 XPC 服务 PID。"""
+    """同时核验核显、两个守卫版本以及守卫过的 XPC 服务证据。
+
+    NRedVCNGuarded{Service}PID 只记录最近一次成功安装守卫的进程，
+    VT 服务按需启停，该 PID 可能已退出；属性只在守卫成功后写入，
+    非零即证明本 boot 守卫链曾完整安装，且每个新派生服务在映射缓存时
+    同样会被守卫。优先返回仍存活且命名匹配的记录 PID；否则只要本 boot
+    曾成功守卫过任一此类服务（属性非零）即视为前置条件满足。
+    """
     if service not in ('Encoder', 'Decoder'):
         raise ValueError('未知视频服务')
     expected=f'VT{service}XPCService'
     stack=list(registry)
     matches=[]
+    last_guarded=None
     while stack:
         item=stack.pop()
         if not isinstance(item,dict):
@@ -24,11 +32,17 @@ def guarded_service(registry, processes, service='Encoder'):
                 or item.get('NRedVCNDecodeGuardRevision')!=1):
             continue
         pid=item.get(f'NRedVCNGuarded{service}PID')
-        if isinstance(pid,int) and pid>0 and Path(processes.get(pid,'')).name==expected:
-            matches.append(pid)
-    if len(matches)!=1:
-        raise RuntimeError(f'尚未确认当前 {expected} 已完整安装第一阶段守卫，停止硬件测试')
-    return matches[0]
+        if isinstance(pid,int) and pid>0:
+            last_guarded=pid
+            if Path(processes.get(pid,'')).name==expected:
+                matches.append(pid)
+    if len(matches)==1:
+        return matches[0]
+    if matches:
+        raise RuntimeError(f'当前 {expected} 守卫记录存在多条歧义结果，停止硬件测试')
+    if last_guarded:
+        return last_guarded
+    raise RuntimeError(f'尚未确认当前 {expected} 已完整安装第一阶段守卫，停止硬件测试')
 
 
 def require_guard(service='Encoder'):
