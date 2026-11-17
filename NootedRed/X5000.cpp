@@ -368,6 +368,27 @@ void X5000::processKext(KernelPatcher& patcher, const size_t id, const mach_vm_a
     PANIC_COND(!PenguinWizardry::PatternRouteRequest::routeAll(patcher, id, requests, slide, size), "X5000",
                "Failed to route symbols");
 
+    this->orgTotalFreeMemory = reinterpret_cast<decltype(this->orgTotalFreeMemory)>(
+        patcher.solveSymbol(id, "__ZN26AMDRadeonX5000_AMDHWMemory15totalFreeMemoryEv", slide, size));
+    this->orgAllocate = reinterpret_cast<decltype(this->orgAllocate)>(patcher.solveSymbol(
+        id,
+        "__ZN26AMDRadeonX5000_AMDHWMemory8allocateEP16AMDMemoryElementyy28_eAMD_MEMORY_ALLOCATION_TYPEb15_eOP_ORIGINATOR9_eOP_TYPE",
+        slide, size));
+    this->orgAllocateNonContiguous = reinterpret_cast<decltype(this->orgAllocateNonContiguous)>(patcher.solveSymbol(
+        id,
+        "__ZN26AMDRadeonX5000_AMDHWMemory21allocateNonContiguousEP16AMDMemoryElementyyyybby15_eOP_ORIGINATOR9_eOP_TYPE",
+        slide, size));
+
+    if (this->orgTotalFreeMemory != nullptr && this->orgAllocate != nullptr && this->orgAllocateNonContiguous != nullptr) {
+        PenguinWizardry::PatternRouteRequest allocLargeReq{
+            "__ZN26AMDRadeonX5000_AMDHWMemory19allocateLargeBlocksEP16AMDMemoryElementyyy15_eOP_ORIGINATOR9_eOP_TYPEb",
+            wrapAllocateLargeBlocks, this->orgAllocateLargeBlocks};
+        if (!allocLargeReq.route(patcher, id, slide, size)) {
+            patcher.clearError();
+            SYSLOG("X5000", "Failed to route AMDHWMemory::allocateLargeBlocks");
+        }
+    }
+
     patchIOAccelAllocPages(patcher, id, slide, size);
     patchVideoProcessCommand(
         patcher, id, slide, size,
@@ -375,7 +396,11 @@ void X5000::processKext(KernelPatcher& patcher, const size_t id, const mach_vm_a
         "__ZN35AMDRadeonX5000_AMDAccelVideoContext13fetchResourceEP22_AMDVideoResourceParamP21_AMDVideoResourceInfo");
     patchSWSchedulerAdvance(patcher, id, slide, size);
 
-    if (currentKernelVersion() >= MACOS_11) {
+    if (currentKernelVersion() >= MACOS_11 && checkKernelArgument("-NRedNoComputeSubmit")) {
+        // (Kill-switch semantics ported from xiaot-evo 484f8d1.)
+        SYSLOG("X5000", "Compute submit hook disabled by -NRedNoComputeSubmit");
+    }
+    else if (currentKernelVersion() >= MACOS_11) {
         PenguinWizardry::PatternSolveRequest solveRequest{"__ZN30AMDRadeonX5000_AMDGFX9Hardware15notifyGfxAccessEv",
                                                           this->notifyGfxAccess};
         PANIC_COND(!solveRequest.solve(patcher, id, slide, size), "X5000", "Failed to resolve notifyGfxAccess");
@@ -584,6 +609,104 @@ UInt64 X5000::wrapAdjustVRAMAddress(void* const self, const UInt64 addr)
     auto ret = FunctionCast(wrapAdjustVRAMAddress, singleton().orgAdjustVRAMAddress)(self, addr);
     if (ret != addr) { return ret + NRed::singleton().getFbOffset(); }
     return ret;
+}
+
+// Multi-tier replacement for AMDHWMemory::allocateLargeBlocks: the stock implementation tries a
+// single strategy and fails even when enough free VRAM exists.  This version falls back across
+// contiguous/non-contiguous allocations in both the non-visible and full UMA ranges, then retries
+// with finer segment sizes under fragmentation.  (Ported from weachy c9467c9.)
+bool X5000::wrapAllocateLargeBlocks(void* const self, void* const elem, const UInt64 size, const UInt64 align,
+                                    const UInt64 minBlockSize, const UInt32 orig, const UInt32 opType,
+                                    const bool onlyNonVisible)
+{
+    auto& inst = singleton();
+    if (self == nullptr || elem == nullptr || size == 0) { return false; }
+
+    const UInt64 pageAlignedSize = (size + PAGE_MASK) & ~static_cast<UInt64>(PAGE_MASK);
+    if (inst.orgTotalFreeMemory != nullptr && inst.orgTotalFreeMemory(self) < pageAlignedSize) {
+        // Fast-fail without walking the allocator free list or spamming IOLog while
+        // IOAcceleratorFamily2 is evicting small LRU buffers one by one to make room.
+        return false;
+    }
+
+    const UInt64 blockGranularity = minBlockSize >= PAGE_SIZE ? minBlockSize : 0x10000ULL;
+    const UInt64 roundedSize =
+        size > blockGranularity ? ((size + blockGranularity - 1) & ~(blockGranularity - 1)) : pageAlignedSize;
+    const UInt64 safeAlign = align >= blockGranularity ? align : blockGranularity;
+
+    // 1. Contiguous attempt in Non-Visible range [256MB, totalVRAMSize] (allocType = 1)
+    if (inst.orgAllocate(self, elem, size, align, 1, false, orig, opType)) { return true; }
+
+    // 2. Contiguous attempt in Visible range [reservedNdrvEnd, 256MB] (allocType = 0) if allowed
+    if (!onlyNonVisible && inst.orgAllocate(self, elem, size, align, 0, false, orig, opType)) { return true; }
+
+    auto tryNonContiguousRange = [&](const UInt32 allocType) -> bool {
+        if (roundedSize > blockGranularity &&
+            (inst.orgTotalFreeMemory == nullptr || inst.orgTotalFreeMemory(self) >= roundedSize)) {
+            UInt64 chunkSize = 1;
+            UInt64 tmp       = roundedSize;
+            while ((tmp & 1) == 0) {
+                tmp >>= 1;
+                chunkSize <<= 1;
+            }
+            if (tmp == 1) { chunkSize >>= 1; }
+
+            if (chunkSize >= blockGranularity &&
+                inst.orgAllocateNonContiguous(self, elem, roundedSize, align, allocType, false, false, chunkSize, orig,
+                                              opType)) {
+                return true;
+            }
+            if (chunkSize > blockGranularity) {
+                const UInt64 halfChunk = chunkSize >> 1;
+                if (halfChunk >= blockGranularity &&
+                    inst.orgAllocateNonContiguous(self, elem, roundedSize, align, allocType, false, false, halfChunk,
+                                                  orig, opType)) {
+                    return true;
+                }
+                if (halfChunk > blockGranularity &&
+                    inst.orgAllocateNonContiguous(self, elem, roundedSize, align, allocType, false, false,
+                                                  blockGranularity, orig, opType)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+
+    // 3. Non-contiguous attempts in Non-Visible range [256MB, totalVRAMSize] (allocType = 1)
+    if (tryNonContiguousRange(1)) { return true; }
+
+    // 4. Fallback to Full UMA VRAM range [reservedNdrvEnd, totalVRAMSize] (allocType = 2):
+    //    On AMD APUs, BAR0-visible and non-visible UMA are backed by identical system RAM,
+    //    and totalFreeMemory() includes free space in [reservedNdrvEnd, 256MB].
+    if (inst.orgAllocate(self, elem, size, align, 2, false, orig, opType)) { return true; }
+    if (tryNonContiguousRange(2)) { return true; }
+
+    // 5. Fine-grained non-contiguous fallback (16KB -> 4KB segment lengths with 64KB+ start alignment)
+    //    when VRAM is heavily fragmented:
+    if (pageAlignedSize > 0x4000ULL) {
+        const UInt64 align16K = (pageAlignedSize + 0x3FFFULL) & ~0x3FFFULL;
+        if (inst.orgTotalFreeMemory == nullptr || inst.orgTotalFreeMemory(self) >= align16K) {
+            if (inst.orgAllocateNonContiguous(self, elem, align16K, safeAlign, 1, false, false, 0x4000ULL, orig,
+                                              opType) ||
+                inst.orgAllocateNonContiguous(self, elem, align16K, safeAlign, 2, false, false, 0x4000ULL, orig,
+                                              opType)) {
+                return true;
+            }
+        }
+    }
+    if (pageAlignedSize > PAGE_SIZE) {
+        if (inst.orgAllocateNonContiguous(self, elem, pageAlignedSize, safeAlign, 1, false, false, PAGE_SIZE, orig,
+                                          opType) ||
+            inst.orgAllocateNonContiguous(self, elem, pageAlignedSize, safeAlign, 2, false, false, PAGE_SIZE, orig,
+                                          opType) ||
+            inst.orgAllocateNonContiguous(self, elem, pageAlignedSize, PAGE_SIZE, 2, false, false, PAGE_SIZE, orig,
+                                          opType)) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 UInt32 X5000::returnZero() { return 0; }
