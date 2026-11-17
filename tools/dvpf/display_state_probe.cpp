@@ -1,6 +1,7 @@
 // DVPF 状态探针：显示组依赖、拒绝原因、共享账本视图和跳板生命周期。
 #include <VPF/DisplayCapabilityState.hpp>
 #include <VPF/DisplayDependencyPlanner.hpp>
+#include <VPF/DisplayRuntime.hpp>
 #include <VPF/ExecutableTrampolineResource.hpp>
 #include <cstdio>
 #include <cstdlib>
@@ -31,22 +32,21 @@ static void expectReason(const DisplayGroupResult& result, const DisplayGroup gr
 
 static void testPlanner()
 {
-    constexpr UInt32 allGroups = allDisplayGroupBits & ~displayGroupBit(DisplayGroup::HDRResearch);
+    constexpr UInt32 allGroups = allDisplayGroupBits;
     check(requestedGroupsForDisplayFix(false, 25) == 0, "policy disabled");
     check((requestedGroupsForDisplayFix(true, 25) & allGroups) == allGroups, "policy darwin25");
-    check((requestedGroupsForDisplayFix(true, 23) & displayGroupBit(DisplayGroup::MetalScratch)) == 0,
+    check((requestedGroupsForDisplayFix(true, 23) & displayGroupBit(DisplayGroup::MetalScratch)) != 0,
           "policy darwin23 scratch");
-    check((requestedGroupsForDisplayFix(true, 25) & displayGroupBit(DisplayGroup::HDRResearch)) == 0,
-          "policy no hdr");
+    check((requestedGroupsForDisplayFix(true, 25) & ~allDisplayGroupBits) == 0, "policy group bits");
     constexpr UInt32 displayExternal =
         ExternalOpenGLPageHook | ExternalMetalBridge | ExternalSubmitResolver | ExternalKernelDisplay;
 
-    const auto darwin25 =
-        planDisplay(input(OsDarwin25, 0x1638, allGroups | displayGroupBit(DisplayGroup::HDRResearch), displayExternal));
+    // 越界组位不对应任何组，必须被忽略，不能启用或报告为某个现有组。
+    const auto darwin25 = planDisplay(input(OsDarwin25, 0x1638, allGroups | ~allDisplayGroupBits, displayExternal));
     check(!darwin25.cycle, "darwin25 cycle");
-    check((darwin25.enabled & allGroups) == allGroups, "darwin25 enabled");
-    check((darwin25.rejected & displayGroupBit(DisplayGroup::HDRResearch)) != 0, "hdr rejected");
-    expectReason(darwin25, DisplayGroup::HDRResearch, DisplayRejectReason::ExperimentalDisabled, "hdr reason");
+    check(darwin25.enabled == allGroups && darwin25.rejected == 0, "darwin25 enabled");
+    const auto invalidOnly = planDisplay(input(OsDarwin25, 0x1638, ~allDisplayGroupBits, displayExternal));
+    check(invalidOnly.enabled == 0 && invalidOnly.rejected == 0 && invalidOnly.orderCount == 0, "invalid group bits");
     check(orderedBefore(darwin25, DisplayGroup::MetalRenderCore, DisplayGroup::MetalScratch), "render before scratch");
     check(orderedBefore(darwin25, DisplayGroup::MetalSubmitSafety, DisplayGroup::MetalRenderCore),
           "submit before render");
@@ -59,13 +59,8 @@ static void testPlanner()
           "24 submit before render");
 
     const auto darwin23 = planDisplay(input(OsDarwin23, 0x1638, allGroups, displayExternal));
-    constexpr UInt32 legacyGroups =
-        displayGroupBit(DisplayGroup::GLHwInfo) | displayGroupBit(DisplayGroup::GLDualQuad)
-        | displayGroupBit(DisplayGroup::MetalRenderCore) | displayGroupBit(DisplayGroup::MetalSubmitSafety)
-        | displayGroupBit(DisplayGroup::KernelGFX9) | displayGroupBit(DisplayGroup::KernelScanout);
-    check((darwin23.enabled & legacyGroups) == legacyGroups, "darwin23 legacy groups");
-    expectReason(darwin23, DisplayGroup::MetalScratch, DisplayRejectReason::UnsupportedOperatingSystem,
-                 "darwin23 scratch");
+    check(darwin23.enabled == allGroups && darwin23.rejected == 0, "darwin23 all groups");
+    check(orderedBefore(darwin23, DisplayGroup::MetalRenderCore, DisplayGroup::MetalScratch), "23 render scratch");
     check(orderedBefore(darwin23, DisplayGroup::MetalSubmitSafety, DisplayGroup::MetalRenderCore),
           "23 submit before render");
 
@@ -92,9 +87,26 @@ static void testPlanner()
     check(orderedBefore(scratchOnly, DisplayGroup::MetalRenderCore, DisplayGroup::MetalScratch),
           "scratch closure order");
 
-    const auto hdr = planDisplay(input(OsDarwin25, 0x1638, displayGroupBit(DisplayGroup::HDRResearch),
-                                       displayExternal | ExternalHDRResearch, allFeatureBits, true));
-    check((hdr.enabled & displayGroupBit(DisplayGroup::HDRResearch)) != 0, "hdr experimental enabled");
+    // 不可安装组默认拒绝；仅显式实验模式才进入规划。
+    constexpr DisplayGroupSpec experimental[] = {
+        {DisplayGroup::GLHwInfo, "A", featureBit(FeatureId::DisplayOpenGLHwInfo), 0, 0, false},
+    };
+    const auto locked = evaluateDisplayGroups(
+        input(OsDarwin25, 0x1638, displayGroupBit(DisplayGroup::GLHwInfo), displayExternal), experimental, 1);
+    check(locked.enabled == 0 && (locked.rejected & displayGroupBit(DisplayGroup::GLHwInfo)) != 0,
+          "experimental rejected");
+    expectReason(locked, DisplayGroup::GLHwInfo, DisplayRejectReason::ExperimentalDisabled, "experimental reason");
+    const auto unlocked = evaluateDisplayGroups(
+        input(OsDarwin25, 0x1638, displayGroupBit(DisplayGroup::GLHwInfo), displayExternal, allFeatureBits, true),
+        experimental, 1);
+    check((unlocked.enabled & displayGroupBit(DisplayGroup::GLHwInfo)) != 0, "experimental enabled");
+    // 组表长度超过组数或为空必须失败闭合。
+    check(evaluateDisplayGroups(input(OsDarwin25, 0x1638, allGroups, displayExternal), DefaultDisplayGroups,
+                                DisplayGroupCount + 1)
+              .cycle,
+          "group table overflow");
+    check(evaluateDisplayGroups(input(OsDarwin25, 0x1638, allGroups, displayExternal), nullptr, 0).cycle,
+          "group table empty");
 
     // 组级环必须失败闭合，不允许部分成功。
     constexpr DisplayGroupSpec cyclic[] = {
@@ -121,7 +133,7 @@ static void testPlanner()
     const auto                     conflicted = evaluateDisplayGroups(
         input(OsDarwin25, 0x1638, displayGroupBit(DisplayGroup::GLHwInfo) | displayGroupBit(DisplayGroup::GLDualQuad),
                                   displayExternal),
-        DefaultDisplayGroups, 8, conflict, 1);
+        DefaultDisplayGroups, DisplayGroupCount, conflict, 1);
     check((conflicted.enabled & displayGroupBit(DisplayGroup::GLHwInfo)) != 0, "conflict winner");
     check((conflicted.rejected & displayGroupBit(DisplayGroup::GLDualQuad)) != 0, "conflict loser");
     expectReason(conflicted, DisplayGroup::GLDualQuad, DisplayRejectReason::GroupConflict, "conflict reason");
@@ -214,11 +226,74 @@ static void testTrampoline()
     check(verified.restoreEntry(true) && verified.release() && verified.invariant(), "verified release");
 }
 
+static void testRuntime()
+{
+    DisplayRuntime runtime;
+    for (UInt32 major = 23; major <= 25; ++major) {
+        const auto groups = requestedGroupsForDisplayFix(true, major) & MetalDisplayGroups;
+        runtime.reset(0x1000, major, 0x1638, groups);
+        check(!runtime.begin() && !runtime.ready(), "runtime no evidence no write");
+        const auto features = runtime.features();
+        const auto guard    = featureBit(FeatureId::DisplaySubmitGuard);
+        check(!runtime.verify(features & ~guard, ExternalMetalBridge), "runtime missing guard");
+        check(!runtime.begin(), "runtime cannot bypass guard rejection");
+        check(runtime.verify(guard, ExternalSubmitResolver), "runtime complete evidence");
+        check(runtime.begin() && runtime.ready(), "runtime eligible allows write");
+        check(runtime.installed(guard), "runtime guard delivered");
+        check(runtime.state(DisplayGroup::MetalSubmitSafety) == DisplayGroupState::Installing,
+              "runtime partial safety group is not installed");
+        check(runtime.state(DisplayGroup::MetalRenderCore) == DisplayGroupState::Installing,
+              "runtime guard does not install render");
+        check(runtime.installed(features), "runtime all delivered");
+        check(runtime.state(DisplayGroup::MetalRenderCore) == DisplayGroupState::Installed,
+              "runtime applicable render members installed");
+        check(runtime.state(DisplayGroup::MetalSubmitSafety) == DisplayGroupState::Installed,
+              "runtime safety installed");
+        check(runtime.state(DisplayGroup::MetalScratch) == DisplayGroupState::Installed,
+              "runtime applicable scratch members installed");
+    }
+    runtime.reset(0x2000, 25, 0x1638, MetalDisplayGroups);
+    check(!runtime.verify(runtime.features() & ~featureBit(FeatureId::DisplaySRD),
+                          ExternalMetalBridge | ExternalSubmitResolver),
+          "runtime missing render member");
+    check(!runtime.begin(), "runtime missing dependency blocks scratch transaction");
+    check(runtime.result().reasons[static_cast<UInt32>(DisplayGroup::MetalScratch)]
+              == DisplayRejectReason::MissingDependency,
+          "runtime scratch dependency rejected");
+    check(runtime.verify(featureBit(FeatureId::DisplaySRD), 0) && runtime.begin(), "runtime resolve dependency");
+    runtime.installed(featureBit(FeatureId::DisplaySubmitGuard));
+    runtime.failed(false);
+    check(!runtime.ready(), "runtime quarantine prevents continuation");
+    check(runtime.state(DisplayGroup::MetalRenderCore) == DisplayGroupState::Quarantined,
+          "runtime rollback failure quarantines render");
+    check(runtime.state(DisplayGroup::MetalSubmitSafety) == DisplayGroupState::Quarantined,
+          "runtime partial safety failure is quarantined");
+    check(!runtime.installed(runtime.features()), "runtime cannot promote failed install");
+
+    const auto gl = displayGroupBit(DisplayGroup::GLHwInfo);
+    runtime.reset(0x3000, 25, 0x1638, gl);
+    check(!runtime.ready(), "runtime new page cannot reuse prior state");
+    check(!runtime.verify(runtime.features(), 0) && !runtime.begin(), "runtime missing page hook");
+    check(runtime.verify(0, ExternalOpenGLPageHook) && runtime.begin(), "runtime page ready");
+    runtime.failed(true);
+    check(runtime.state(DisplayGroup::GLHwInfo) == DisplayGroupState::RollbackComplete && !runtime.ready(),
+          "runtime recovered failure cannot continue");
+    runtime.reset(0x4000, 25, 0xFFFF, gl);
+    check(!runtime.verify(allFeatureBits, ExternalOpenGLPageHook) && !runtime.begin(), "runtime unsupported device");
+    runtime.reset(0x5000, 26, 0x1638, gl);
+    check(!runtime.verify(allFeatureBits, ExternalOpenGLPageHook) && !runtime.begin(), "runtime unsupported OS");
+    runtime.reset(0x6000, 25, 0x1638, 0);
+    check(!runtime.verify(allFeatureBits, ExternalOpenGLPageHook) && !runtime.begin(), "runtime disabled policy");
+    runtime.reset(0, 25, 0x1638, gl);
+    check(runtime.verify(allFeatureBits, ExternalOpenGLPageHook) && !runtime.begin(), "runtime missing address space");
+}
+
 int main()
 {
     testPlanner();
     testLedger();
     testTrampoline();
+    testRuntime();
     if (failures) {
         std::fprintf(stderr, "FAILED: %u checks\n", failures);
         return 1;

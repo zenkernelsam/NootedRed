@@ -9,7 +9,7 @@ from metal_cache import CacheReader, macho
 ROOT = Path(__file__).resolve().parents[1]
 WORK = ROOT / 'build/user-surface-sync/scratch'
 SYMBOL = '__ZL33amdMtl_GFX9_AllocateScratchBufferP28GFX9_MtlComputePipelineStatej'
-DIGEST = '901b678273297d0148c2cf9c4812cab5281e80338414eba0f0f3570b4bca8c8d'
+DIGEST = '1b15f52f45d61d09adae7f12979f52e729ee97e857dcb959e5fa62f06dd45a4e'
 
 
 def supported_devices():
@@ -100,7 +100,7 @@ def generate(cache, device_id=0x1638, profile=None):
     _, sections, _ = macho(lambda a, n: data[a:a+n], 0)
     section = next(s for s in sections if s[0] == '__text')
     patched = data[section[3]:section[3] + section[2]]
-    if len(patched) != len(original) or address // 4096 != (address + len(patched) - 1) // 4096:
+    if len(patched) != len(original):
         raise ValueError(f'补丁越界：{len(patched)}')
     tail = 0xD6 if profile else 0xCA
     if patched[tail:] != original[tail:]:

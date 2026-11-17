@@ -2,8 +2,11 @@
 import argparse
 import datetime
 import json
+import re
 from pathlib import Path
 import subprocess
+import time
+
 from video_hardware_guard import require_guard, GPUMonitor, HardwareFault, wait_for_case
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -12,11 +15,14 @@ ROOT = Path(__file__).resolve().parents[1]
 def build_cases(args):
     cases = [("list", ["--list"])]
     modes = ["software"] + (["auto", "hardware"] if args.hardware else [])
-    cases += [(f"{mode}-{codec}", [f"--{mode}", codec]) for mode in modes for codec in ["h264", "hevc"]]
-    if args.hardware_decode:
-        cases = [(label, options if label == "list" else options + ["--hardware-decode"])
-                 for label, options in cases]
+    codecs = ["hevc"] if args.main10 else ["h264", "hevc"]
+    prefix = "main10-" if args.main10 else ""
+    extra = (["--main10"] if args.main10 else []) + (["--hardware-decode"] if args.hardware_decode else [])
+    cases += [(f"{prefix}{mode}-{codec}", [f"--{mode}", codec, *extra])
+              for mode in modes for codec in codecs]
     return cases
+
+
 
 
 def main():
@@ -27,6 +33,7 @@ def main():
     parser.add_argument("--width", type=int, default=1280, help="偶数宽度，16–4096")
     parser.add_argument("--height", type=int, default=720, help="偶数高度，16–2160")
     parser.add_argument("--frames", type=int, default=3, help="完整编码和回读的帧数，1–120")
+    parser.add_argument("--main10", action="store_true", help="HEVC Main10：x420 输入与 10 位回读校验")
     parser.add_argument("--timeout", type=int, default=20, help="每项测试超时秒数，范围 1–60")
     args = parser.parse_args()
     if not 1 <= args.timeout <= 60:
@@ -45,8 +52,6 @@ def main():
         "-framework", "Foundation", "-framework", "VideoToolbox", "-framework", "CoreMedia",
         "-framework", "CoreVideo", str(ROOT / "tools/test_video_encode.m"), "-o", str(executable),
     ], check=True, timeout=60)
-    if args.hardware:
-        print(f"Guarded encoder PID: {require_guard()}", flush=True)
     rows = []
     cases = build_cases(args)
     monitor = GPUMonitor(work) if args.hardware else None
@@ -58,9 +63,10 @@ def main():
 
 def run_cases(args, work, executable, cases, monitor, rows):
     for label, options in cases:
-        if label.startswith(("auto-", "hardware-")):
-            require_guard()
+        if monitor:
             monitor.check()
+        if not label.startswith(("list", "software")):
+            require_guard()
         print(f"BEGIN {label}", flush=True)
         with (work / f"{label}.jsonl").open("w") as output, (work / f"{label}.stderr.txt").open("w") as errors:
             process = subprocess.Popen([str(executable), *options], stdout=output, stderr=errors)

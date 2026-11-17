@@ -6,7 +6,9 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-WORK = ROOT / ('build/dynamic-cache/sequoia-video' if '--sequoia' in sys.argv else 'build/dynamic-cache/video')
+SONOMA = '--sonoma' in sys.argv
+LEGACY = SONOMA or '--sequoia' in sys.argv
+WORK = ROOT / ('build/dynamic-cache/sonoma-video' if SONOMA else 'build/dynamic-cache/sequoia-video' if '--sequoia' in sys.argv else 'build/dynamic-cache/video')
 
 
 def main():
@@ -17,28 +19,101 @@ def main():
     boolean = WORK / 'stubs/libkern/c++'
     boolean.mkdir(parents=True, exist_ok=True)
     (boolean / 'OSBoolean.h').write_text('#pragma once\n#include <IOKit/IOUserClient.h>\n')
+    (stub / 'IOLocks.h').write_text('#pragma once\nstruct IOLock;\nstatic void IOLockLock(IOLock*);static void IOLockUnlock(IOLock*);\n')
+    (stub / 'IOLib.h').write_text('#pragma once\n#include <IOKit/IOLocks.h>\nstatic IOLock* IOLockAlloc();\n')
+    (WORK / 'stubs/NRed.hpp').write_text('#pragma once\n')
+    clock = WORK / 'stubs/kern'
+    clock.mkdir(exist_ok=True)
+    (clock / 'clock.h').write_text('#pragma once\ninline UInt64 mach_absolute_time(){return 1;}\ninline void absolutetime_to_nanoseconds(UInt64 a,UInt64* n){*n=a;}\n')
     util = WORK / 'stubs/Headers'
     util.mkdir(parents=True, exist_ok=True)
     (util / 'kern_util.hpp').write_text('#pragma once\n#include <IOKit/IOTypes.h>\n')
     source = (ROOT / 'NootedRed/UserVideoDecode.cpp').read_text()
     if '--baseline' in sys.argv:
         source = subprocess.check_output(['git','show','6c7b0804b5b115052fab5914eecfad7090b53eb1:NootedRed/UserVideoDecode.cpp'],cwd=ROOT,text=True)
-    body = re.split(r'namespace\s*\{', source, maxsplit=1)[1].split('}    // namespace', 1)[0]
+    body = re.split(r'namespace\s*\{', source, maxsplit=1)[1].rsplit('}    // namespace', 1)[0]
     body = with_memory_helpers(body)
     template = (ROOT / 'tools/fixtures/vcn-user-bridge.cpp.in').read_text()
-    preamble = template[:template.index('static bool isWindowServer')]
+    preamble = template
+    begin = preamble.index('#include "video-decode-env.hpp"')
+    end = begin + len('#include "video-decode-env.hpp"')
+    preamble = preamble[:begin] + r'''
+#include <sys/errno.h>
+namespace UserPatchCoordinator {
+constexpr unsigned HeaderSize=104;
+enum class Outcome {Pending,Idle,Patched};
+struct Participant {Outcome outcome=Outcome::Pending;unsigned proofSites=0;};
+struct Transaction {Participant video,vp9;bool sharedHeader(UInt64&,UInt8*){return false;}};
+using PatchCallback=int(*)(void*,void*,int,Transaction&);
+inline bool deferModulePatches(){return false;}
+inline void clearVideo(){} inline void registerVideo(PatchCallback){}
+inline void forgetMap(void*){} inline bool processAllowed(void*){return true;}
+template<class T>void settlePatched(Participant& p,const T& plan){p.outcome=Outcome::Patched;p.proofSites=plan.siteCount();}
+}
+''' + preamble[end:]
+    preamble = preamble.replace('assert(strcmp(s,"-NRedVideoFix")==0||strcmp(s,"-NRedNoFVRC")==0);',
+                                'if(strcmp(s,"-NRedVideoFix")&&strcmp(s,"-NRedNoFVRC"))return false;')
+    preamble = preamble.replace('bool allocated(){return active;}', 'static bool vp9Ready=false;bool allocated(){return active;}void setVP9Ready(bool v){vp9Ready=v;}')
     preamble = preamble.replace('#include "UserVideoDecodeData.hpp"', '#include <vector>\n#include "UserVideoDecodeData.hpp"\n#include "UserVideoDecodeResolver.hpp"')
     preamble += '#include "user-cache-dynamic.hpp"\n'
+    preamble = preamble.replace('#define IONew(T,N) (new T[N])\n#define IODelete(P,T,N) delete[] P', r'''
+#include <cstdlib>
+#include <type_traits>
+struct TransactionState;
+static bool failTransaction=false,failDynamic=false;
+static unsigned liveTransactions=0,liveDynamicPlans=0;
+template<class T>T* trackedNew(size_t count){
+ if constexpr(std::is_same_v<T,TransactionState>){if(failTransaction)return nullptr;}
+ if constexpr(std::is_same_v<T,UserVideoDecodeResolver::Plan>){if(failDynamic)return nullptr;}
+ auto* p=static_cast<T*>(malloc(sizeof(T)*count));if(!p)return nullptr;
+ memset(p,0xa5,sizeof(T)*count);
+ if constexpr(std::is_same_v<T,TransactionState>)liveTransactions++;
+ if constexpr(std::is_same_v<T,UserVideoDecodeResolver::Plan>)liveDynamicPlans++;
+ return p;
+}
+template<class T>void trackedDelete(T* p){
+ if constexpr(std::is_same_v<T,TransactionState>){assert(liveTransactions>0);liveTransactions--;}
+ if constexpr(std::is_same_v<T,UserVideoDecodeResolver::Plan>){assert(liveDynamicPlans>0);liveDynamicPlans--;}
+ free(p);
+}
+#define IONew(T,N) trackedNew<T>(N)
+#define IODelete(P,T,N) trackedDelete(P)
+''')
+
     harness = preamble + r'''
+// 当前源码使用 IOLock 与 map 门；测试夹具提供单进程替身，不涉及真实锁语义。
+#include <mutex>
+#include <condition_variable>
+struct IOLock { std::mutex mutex; };
+static IOLock* IOLockAlloc(){return new IOLock;}
+static void IOLockFree(IOLock* p){delete p;}
+static void IOLockLock(IOLock* p){p->mutex.lock();}
+static void IOLockUnlock(IOLock* p){p->mutex.unlock();}
+constexpr int THREAD_UNINT=0;
+static std::condition_variable_any gateChanged;
+static int IOLockSleep(IOLock* p,void*,int){std::unique_lock<std::mutex> held(p->mutex,std::adopt_lock);gateChanged.wait(held);held.release();return 0;}
+static void IOLockWakeup(IOLock*,void*,bool){gateChanged.notify_all();}
+#include <UserPatchMapGate.hpp>
 static bool drmClient=false;
 static const char* clientName="Music";
 static std::set<uint64_t> drmTouchedPages;
+static std::map<uint64_t,int> maxima;
 static kern_return_t vm_protect(vm_map_t,uint64_t a,unsigned,int setMax,int flags){
  protects++;if(protects==failedProtect || failedProtectCalls.contains(protects))return 42;assert(protections.contains(a));
  drmTouchedPages.insert(a);
- if(setMax)protections[a]&=flags&7;else protections[a]=flags&7;return 0;}
+ int value=flags&7;
+ if(setMax){maxima[a]=value;protections[a]&=value;}else{protections[a]=value;maxima[a]|=value;}
+ return 0;}
+#include <UserVP9DecodeResolver.hpp>
+#include <UserRejectedCaches.hpp>
+#include <UserPhaseTiming.hpp>
+namespace UserPhaseTiming {
+UInt8& enabledFlag(){static UInt8 f=0;return f;}
+Slot* slots(){static Slot v[PhaseCount]{};return v;}
+UInt32& publishTicket(){static UInt32 n=0;return n;}
+}
 BODY
-static int original(proc_t,SharedRegionCheckArgs*,int* value){*value=123;return 0;}
+static int original(proc_t,SharedRegionCheckArgs*,int* value){assert(liveTransactions==0&&liveDynamicPlans==0);*value=123;return 0;}
 static int proc_pid(proc_t){return 217;}static void proc_name(int,char* name,int size){snprintf(name,size,"%s",drmClient?clientName:"VTDecoderXPC");}
 static vm_map_t map(task_t){return reinterpret_cast<void*>(2);}
 static std::map<uint64_t,std::vector<uint8_t>> cleanBlocks;
@@ -53,21 +128,46 @@ static bool cleanPage(uint64_t a){
 }
 static kern_return_t query(vm_map_t,uint64_t* a,uint64_t* size,unsigned*,int* p,unsigned* count){
  assert(*count==VM_REGION_SUBMAP_SHORT_INFO_COUNT_64);auto*i=reinterpret_cast<vm_region_submap_short_info_data_64_t*>(p);
- i->protection=protections.contains(*a)?protections.at(*a):1;i->is_submap=0;*size=4096;
+ i->protection=protections.contains(*a)?protections.at(*a):1;i->max_protection=maxima.contains(*a)?maxima.at(*a):7;
+ i->is_submap=0;*size=4096;
  i->object_id=0x1234;i->share_mode=cleanPage(*a)?5:2;i->shadow_depth=0;return 0;}
 static void setup(unsigned id){
  using namespace UserVideoDecodeData;cache(ResolverImages,ResolverFunctions,true);cleanBlocks=blocks;
- devicePatches=findDevice(id);assert(devicePatches);
+ NRed::device=id;devicePatches=findDevice(id);assert(devicePatches);
  VPF::ResolutionDiagnostics::setEnabled(true);VPF::resolutionCache.init();
- drmClient=false;clientEntitlement=nullptr;drmTouchedPages.clear();
-#ifndef BASELINE
- fairPlayDriverOnly=false;
-#endif
+ drmClient=false;clientEntitlement=nullptr;drmTouchedPages.clear();maxima.clear();
  published={};seenStages=appliedCount=errorCount=0;originalCheck=reinterpret_cast<uint64_t>(original);readUser=reader;writeUser=writer;getTaskMap=map;queryRegion=query;
 }
-static void call(){SharedRegionCheckArgs args{0x1000};int value=0;assert(wrappedSharedRegionCheck(drmClient?reinterpret_cast<void*>(217):nullptr,&args,&value)==0&&value==123);}
+static void call(){SharedRegionCheckArgs args{0x1000};int value=0;assert(wrappedSharedRegionCheck(drmClient?reinterpret_cast<void*>(217):nullptr,&args,&value)==0&&value==123);assert(liveTransactions==0&&liveDynamicPlans==0);}
 int main(){
+ // 执行真实初始化入口：三系统注册相同生命周期和共享缓存 Hook。
+ for(unsigned major:{23U,24U,25U}){
+  Version::majorValue=major;NRed::device=0x1638;properties.clear();
+  flag=false;KernelPatcher disabled;UserVideoDecode::init(disabled);assert(disabled.routes==0&&disabled.solves==0);
+  flag=true;KernelPatcher enabled;UserVideoDecode::init(enabled);
+  assert(enabled.routes==2&&properties.at("NRedVCNUserEnabled")==1);
+  assert(properties.at("NRedDRMVideoRevision")==5);
+  assert(devicePatches==(major==23?INIT_SONOMA::findDevice(0x1638):
+                         major==24?INIT_SEQUOIA::findDevice(0x1638):INIT_TAHOE::findDevice(0x1638)));
+  for(unsigned device:{0x15D8U,0x15DDU,0xFFFF1638U}){
+   NRed::device=device;KernelPatcher rejected;UserVideoDecode::init(rejected);assert(rejected.routes==0);
+  }
+ }
+ for(unsigned major:{22U,26U}){
+  Version::majorValue=major;NRed::device=0x1638;KernelPatcher rejected;UserVideoDecode::init(rejected);
+  assert(rejected.routes==0&&properties.at("NRedVCNUserRejected")==4);
+ }
+ Version::majorValue=PROFILE_MAJOR;darwinMajor=PROFILE_MAJOR;
+ if(!guardLock)guardLock=IOLockAlloc();
  unsigned cases=0;
+ // IONew 按原始内存模拟；逐一拒绝两处工作区分配，退出时必须全部释放。
+ for(bool dynamicFailure:{false,true}){
+  setup(0x1638);auto initial=blocks;
+  failTransaction=!dynamicFailure;failDynamic=dynamicFailure;call();
+  assert(blocks==initial&&writes==0&&protects==0);
+  assert(properties.at("NRedVCNUserLastError")==KERN_RESOURCE_SHORTAGE);
+  failTransaction=failDynamic=false;cases++;
+ }
  for(unsigned id:{0x15e7U,0x1636U,0x1638U,0x164cU}){
   setup(id);UserVideoDecodeResolver::Plan plan;
   assert(UserVideoDecodeResolver::resolve(reader,base,devicePatches,plan));
@@ -107,7 +207,7 @@ int main(){
   clientName=name;
   setup(id);UserVideoDecodeResolver::Plan plan;
   assert(UserVideoDecodeResolver::resolve(reader,base,devicePatches,plan));
-  auto enable=[&]{fairPlayDriverOnly=drmClient=true;clientEntitlement=kOSBooleanTrue;pages(plan.patches,PatchCount);};
+  auto enable=[&]{drmClient=true;clientEntitlement=kOSBooleanTrue;pages(plan.patches,PatchCount);};
   std::set<uint64_t> selectedPages;
   constexpr unsigned selectedMask=UserVideoDecodeData::FairPlayDecodeMask;
   for(unsigned i=0;i<PatchCount;i++)if(selectedMask&(1U<<i)){
@@ -156,16 +256,67 @@ int main(){
  printf("PASS %u video dynamic bridge cases: four devices; shifted images/functions/GOT; cross-page rollback; content/metadata/target rejection\n",cases);
 }
 '''
-    if '--sequoia' in sys.argv:
+    if '--vp9' in sys.argv:
+        begin = harness.index('int main(){')
+        harness = harness[:begin] + r'''
+#include "vp9-cache-dynamic.hpp"
+int main(){
+ setup(0x1638);vp9Cache();cleanBlocks=blocks;darwinMajor=25;
+ static UserVP9DecodeResolver::Plan resolved;
+ UserSharedCache::Input input{reader,{}};UInt8 scan[UserSharedCache::Input::ScanSize];input.scanBuffer=scan;
+ assert(UserVP9DecodeResolver::resolve(input,base,resolved));
+ pages(resolved.patches,VP9::SiteCount);
+ VP9::enabled=true;VP9::lock=IOLockAlloc();VP9::plan=IONew(UserVP9DecodeResolver::Plan,1);
+ UInt8 uuid[16];assert(reader(base+88,uuid,16)==0);
+ auto initial=blocks;
+ UserPatchCoordinator::Participant first;
+ failedProtect=1;
+ VP9::install(map(nullptr),base,uuid,&first);
+ assert(first.outcome==UserPatchCoordinator::Outcome::Pending&&!VCN::vp9Ready&&blocks==initial);
+ failedProtect=0;
+ UserPatchCoordinator::Participant installed;
+ VP9::install(map(nullptr),base,uuid,&installed);
+ assert(installed.outcome==UserPatchCoordinator::Outcome::Patched&&installed.proofSites==VP9::SiteCount&&VCN::vp9Ready);
+ rx();auto after=writes;
+ assert(properties.at("NRedVTDecoderAdmissionRevision")==1);
+ UserPatchCoordinator::Participant already;
+ VP9::install(map(nullptr),base,uuid,&already);
+ assert(already.outcome==UserPatchCoordinator::Outcome::Patched&&writes==after&&VCN::vp9Ready);
+ const auto& site=resolved.patches[0];UInt8 corrupt=site.patched[site.size-1]^1;
+ put(base+site.offset+site.size-1,&corrupt,1);
+ UserPatchCoordinator::Participant mixed;
+ VP9::install(map(nullptr),base,uuid,&mixed);
+ assert(mixed.outcome==UserPatchCoordinator::Outcome::Pending&&!VCN::vp9Ready&&writes==after);
+ put(base+site.offset,site.patched,site.size);
+ uuid[0]^=1;UserPatchCoordinator::Participant foreign;
+ VP9::install(map(nullptr),base,uuid,&foreign);
+ assert(foreign.outcome==UserPatchCoordinator::Outcome::Pending&&!VCN::vp9Ready&&writes==after);
+ // 同一已解析配置恢复干净页面：部分写入必须回滚，并停止本次启动的 VP9 写入。
+ blocks=initial;failWrite=writes+1;UserPatchCoordinator::Participant failed;
+ VP9::install(map(nullptr),base,VP9::resolvedUUID,&failed);
+ assert(failed.outcome==UserPatchCoordinator::Outcome::Pending&&blocks==initial&&!VCN::vp9Ready);
+ assert(VP9::state==VP9::State::Failed);rx();
+ puts("PASS VP9 install: prewrite retry, full proof, already patched, mixed bytes/UUID rejection, rollback and capability withdrawal");
+}
+'''
+    if LEGACY:
         harness = harness.replace('cache(ResolverImages,ResolverFunctions,true)', 'cache(ResolverImages,ResolverFunctions,false)')
         harness = harness.replace('UserVideoDecodeData::MaxPatchSize,1)', 'UserVideoDecodeData::MaxPatchSize,0)')
         harness = harness.replace('UserVideoDecodeData::', 'UserSequoiaVideoData::')
         harness = harness.replace('using namespace UserVideoDecodeData;', 'using namespace UserSequoiaVideoData;')
-        harness = harness.replace('devicePatches,plan)', 'devicePatches,plan,true)')
+        harness = harness.replace('devicePatches,plan)', f'devicePatches,plan,{23 if SONOMA else 24})')
         harness = harness.replace('0x7F87FE', '0x7FE1FE')
-        harness = harness.replace('drmClient=false;clientEntitlement', 'sequoia=true;drmClient=false;clientEntitlement')
+        harness = harness.replace('drmClient=false;clientEntitlement', f'darwinMajor={23 if SONOMA else 24};Version::majorValue={23 if SONOMA else 24};drmClient=false;clientEntitlement')
+    if SONOMA:
+        harness = harness.replace('UserSequoiaVideoData', 'UserSonomaVideoData')
     # 从实际源文件中提取的桥接引用进程诊断函数。
-    harness = harness.replace('BODY', body)
+    uuid = ('UserSonomaVideoData::CacheUUID' if SONOMA else 'UserSequoiaVideoData::CacheUUID') if LEGACY else 'UserVideoDecodeData::CacheUUID'
+    harness = harness.replace('BODY', 'static bool referenceUUID=false;\nBODY')
+    harness = harness.replace('cleanBlocks=blocks;', f'if(referenceUUID)put(base+88,{uuid},16);cleanBlocks=blocks;')
+    harness = harness.replace('int main(){', 'int main(int argc,char**){referenceUUID=argc>1;')
+    harness = harness.replace('INIT_SONOMA', 'UserSonomaVideoData').replace('INIT_SEQUOIA', 'UserSequoiaVideoData').replace('INIT_TAHOE', 'UserVideoDecodeData')
+    harness = harness.replace('PROFILE_MAJOR', str(23 if SONOMA else 24 if LEGACY else 25))
+    harness = harness.replace('BODY', body + '\n' + source[source.index('void UserVideoDecode::init('):])
     harness = harness.replace('static kern_return_t vm_protect', 'static int proc_pid(proc_t);static void proc_name(int,char*,int);\nstatic kern_return_t vm_protect', 1)
     if '--baseline' in sys.argv:
         harness = harness.replace('call();if(!properties.contains("NRedVCNUserDynamicApplied"))', 'call();assert(writes==0&&protects==0);puts("PASS baseline reproduces unknown-cache rejection");return 0;if(!properties.contains("NRedVCNUserDynamicApplied"))',1)
@@ -176,16 +327,10 @@ int main(){
         flags.append('-DBASELINE')
     subprocess.run(['clang++', '-std=c++23', '-O2', *flags, '-I'+str(WORK/'stubs'),
                     '-I'+str(ROOT/'NootedRed'), '-I'+str(ROOT/'tools/fixtures'), str(file), '-o', str(exe)], check=True, timeout=60)
-    subprocess.run([str(exe)], check=True, timeout=60)
+    if '--known-uuid' not in sys.argv:
+        subprocess.run([str(exe)], check=True, timeout=60)
+    subprocess.run([str(exe), '--known-uuid'], check=True, timeout=60)
 
 
 if __name__ == '__main__':
-    if '--baseline' in sys.argv:
-        main()
-    else:
-        # 新事务夹具合并设备补丁与全部安全入口，继续覆盖本文件的重排、
-        # 元数据拒绝、FairPlay 和跨页故障场景，避免用不含守卫的模拟计划测试安装器。
-        import test_vcn_user_bridge
-        sys.argv = [sys.argv[0], '--major', '24' if '--sequoia' in sys.argv else '25'] + (
-            ['--sanitize'] if '--sanitize' in sys.argv else [])
-        test_vcn_user_bridge.main()
+    main()

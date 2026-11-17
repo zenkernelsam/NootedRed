@@ -16,15 +16,16 @@
 代际依据 [Linux 内核 AMD 硬件组件表](https://www.kernel.org/doc/html/v6.17/gpu/amdgpu/amd-hardware-list-info.html)。
 同一视频代际是复用现有桥接的依据，不代表 Apple 驱动已经支持或新设备已经硬解成功。
 
-第一阶段安全候选仅在 Darwin `24/25` 完整核验守卫后启用用户态适配；Darwin `23`
-因缺少安全入口的完整证据而拒绝启用，详见 [VCN2 第一阶段](vcn2-phase1.md)。内核能力分类仍保留 `23/24/25`。
+用户态适配在 Darwin `23/24/25` 统一按版本专属完整函数和实际引用核验后安装，
+23 不再走缺少数据的拒绝分支。原第一阶段的编解码格式与尺寸拦截器已整体移除；
+历史记录见 [VCN2 第一阶段](vcn2-phase1.md)。
 14/15 的既有配置与限制见
 [多系统适配](macos-multi-os-compat.md)。VCN 启用前还必须通过已核实的内核 ABI：两侧硬件虚表的六个槽位
 分别核对具名方法身份或完整 getter 内容，包含 getter 访问的字段偏移；不兼容时不安装桥接。
 引擎写入复用 X5000 的 PM4 引擎数组基址与 `kAMDHWEngineTypeVCN0`，不另设 `0x3F8` 常量。
 这些检查验证当前桥接依赖的槽位与 getter，不能自动迁移任意新驱动布局。
 
-Tahoe 用户态保留参考 `x86_64h` 缓存 UUID 的静态快路径；其他 UUID 进入动态解析，
+三个系统的用户态补丁均进入动态解析，参考 UUID 也不跳过核验，
 按映像路径、完整函数和实际相对引用生成补丁计划。具体约束见 [动态缓存匹配](user-cache-dynamic.md)。
 使用 `-NRedVideoFix` 显式启用；显示修复另用 `-NRedDisplayFix`。
 完整组合见 [启动参数](boot-arguments.md)；`-NRedVCN` 保留为兼容别名。
@@ -123,7 +124,6 @@ python3 tools/build_vcn_kernel_patch.py
 python3 tools/build_video_decode_patch.py
 python3 tools/test_vcn_candidate.py
 python3 tools/test_vcn_addr_profile.py
-python3 tools/test_vcn_user_bridge.py
 python3 tools/test_video_cache_dynamic.py
 python3 tools/test_video_cache_dynamic.py --sanitize
 python3 tools/test_compute_cache_dynamic.py
@@ -135,7 +135,7 @@ python3 tools/test_vcn_kernel_abi.py
 python3 tools/test_vcn_kernel_abi.py --sanitize
 python3 tools/test_vcn_idle_calls.py
 python3 tools/test_vcn_gva_choice.py
-python3 tools/test_surface_sync_bridge.py
+python3 tools/test_display_runtime_bridge.py
 python3 tools/test_compute_vtable.py
 ```
 

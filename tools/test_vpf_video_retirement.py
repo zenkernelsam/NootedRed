@@ -15,9 +15,7 @@ class VideoRetirementTests(unittest.TestCase):
         for token in (
             'VPF::ManifestData::find',
             'VPF::adaptPatches',
-            'VPF::adaptGuard',
             'VPF::plan(',
-            'VPF::orderedBefore',
             'VPF::VerifiedPatchPlan',
             'VPF::SharedRegionTransaction',
             'NRedVCNVPFPath',
@@ -30,7 +28,6 @@ class VideoRetirementTests(unittest.TestCase):
             self.assertIn(token, text)
         for feature in (
             'Vcn2Decode',
-            'Vcn2SafetyGuard',
             'Vcn2Encode',
             'AppleGVASelection',
             'FairPlayNativeDecodeSubset',
@@ -39,14 +36,15 @@ class VideoRetirementTests(unittest.TestCase):
 
     def test_old_video_orchestration_is_gone(self):
         text = SOURCE.read_text()
-        # 本地适配：fork 保留 legacyProfile/UserLegacyData 外来缓存兜底与 -NRedVCN 别名，
-        # 因此这两项允许存在；旧编排路径（combined/memmove）仍必须清除。
+        # 本地适配：fork 保留 -NRedVCN 别名；旧编排路径（combined/memmove）仍必须清除。
         for token in ('combined[', 'memmove('):
             self.assertNotIn(token, text)
-        self.assertEqual(text.count('writeUser('), 1)
-        start = text.index('bool createGuard(')
-        end = text.index('void recordSafety(')
-        self.assertEqual(text[start:end].count('writeUser('), 1)
+        # 编解码拦截器已移除：不得重新引入守卫解析、守卫页或私有入口补丁。
+        for token in ('UserVideoGuard', 'createGuard(', 'recordSafety(', 'guard.plan', 'adaptGuard',
+                      'Vcn2SafetyGuard'):
+            self.assertNotIn(token, text)
+        # 只通过 ExecutorOps 传递 copyout，不直接调用。
+        self.assertEqual(text.count('writeUser('), 0)
 
     def test_native_hook_and_map_gate_order_preserved(self):
         text = SOURCE.read_text()

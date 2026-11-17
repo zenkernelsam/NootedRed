@@ -17,6 +17,8 @@ def main():
     parser.add_argument('--repeat', type=int, default=1, choices=range(1, 21))
     parser.add_argument('--label', default='result')
     parser.add_argument('--kernel-memchr', action='store_true')
+    parser.add_argument('--memory-reader', action='store_true', help='映射缓存文件后复制读取，减少 pread 对 CPU 对照的干扰')
+    parser.add_argument('--kernel-codegen', action='store_true', help='禁用 SIMD 编译，使用整数微秒报告 CPU 耗时')
     parser.add_argument('--baseline-ref', help='从指定本地提交读取解析器源码，供相同缓存的 CPU 对照测量')
     args = parser.parse_args()
     WORK.mkdir(parents=True, exist_ok=True)
@@ -61,7 +63,6 @@ static void* kernelMemchr(const void* source,int value,size_t count){
 #endif
 #include <UserSurfaceSyncResolver.hpp>
 #include <UserVideoDecodeResolver.hpp>
-#include <UserVideoGuardResolver.hpp>
 struct Mapping {uint64_t start,end,offset,mask,add;const char* path;int fd=-1;};
 static Mapping mappings[]={MAPPINGS};
 static unsigned calls=0;static uint64_t bytesRead=0;
@@ -99,14 +100,10 @@ int main(){
 #if OPTIMIZED
   uint8_t scan[UserSharedCache::Input::ScanSize];input.scanBuffer=scan;
 #endif
-  assert(UserVideoDecodeResolver::resolve(input,base,device.patches,plan,MAJOR==24));
+  assert(UserVideoDecodeResolver::resolve(input,base,device.patches,plan,MAJOR));
   originals(plan,sizeof(plan.patches)/sizeof(plan.patches[0]));
-  printf("PASS real video device=%x reads=%u\n",device.deviceID,plan.reads);
-  UserVideoGuardResolver::Plan guard;
-  assert(UserVideoGuardResolver::resolve(input,base,MAJOR,guard));
-  originals(guard,guard.count);
-  printf("PASS real video+guard device=%x cumulative reads=%u bytes=%u\n",device.deviceID,input.reads,input.bytes);
-  printf("PERF video+guard device=%x calls=%u bytes=%llu cpu_ms=%.3f\n",device.deviceID,calls,bytesRead,1000.0*(clock()-start)/CLOCKS_PER_SEC);
+  printf("PASS real video device=%x reads=%u bytes=%u\n",device.deviceID,plan.reads,input.bytes);
+  printf("PERF video device=%x calls=%u bytes=%llu cpu_ms=%.3f\n",device.deviceID,calls,bytesRead,1000.0*(clock()-start)/CLOCKS_PER_SEC);
  }
  if(MAJOR==25){calls=0;bytesRead=0;auto start=clock();uint64_t offset=0;assert(UserSurfaceSyncResolver::resolveTahoeSubmit(reader,base,offset));
  printf("PASS real full submit method offset=%llx\n",offset);
@@ -127,6 +124,25 @@ int main(){
  for(auto&m:mappings)if(m.fd>=0)close(m.fd);
 }
 '''.replace('MAPPINGS', ',\n'.join(mappings)).replace('MAJOR',str(args.major)).replace('REPEAT', str(args.repeat)).replace('VIDEO_DATA','UserSequoiaVideoData' if args.major==24 else 'UserVideoDecodeData')
+    if args.memory_reader:
+        source = source.replace('#include <ctime>', '#include <ctime>\n#include <sys/mman.h>\n#include <sys/stat.h>')
+        source = source.replace('int fd=-1;', 'int fd=-1;void* memory=nullptr;size_t fileSize=0;')
+        source = source.replace(
+            'if(pread(m.fd,bytes,length,m.offset+address-m.start)!=ssize_t(length))return 1;',
+            '''if(!m.memory){
+   struct stat st{};if(fstat(m.fd,&st)!=0||st.st_size<=0)return 1;m.fileSize=st.st_size;
+   m.memory=mmap(nullptr,m.fileSize,PROT_READ,MAP_PRIVATE,m.fd,0);
+   if(m.memory==MAP_FAILED){m.memory=nullptr;return 1;}
+  }
+  auto offset=m.offset+address-m.start;
+  if(offset>m.fileSize||length>m.fileSize-offset)return 1;
+  memcpy(bytes,static_cast<const uint8_t*>(m.memory)+offset,length);''')
+        source = source.replace('if(m.fd>=0)close(m.fd);',
+                                'if(m.fd>=0){if(m.memory)munmap(m.memory,m.fileSize);close(m.fd);}')
+    if args.kernel_codegen:
+        source = source.replace('cpu_ms=%.3f', 'cpu_us=%llu').replace(
+            '1000.0*(clock()-start)/CLOCKS_PER_SEC',
+            'static_cast<unsigned long long>(1000000ULL*(clock()-start)/CLOCKS_PER_SEC)')
     stub = WORK / 'stubs/IOKit'
     stub.mkdir(parents=True, exist_ok=True)
     (stub / 'IOTypes.h').write_text('#pragma once\n#include <cstdint>\nusing UInt8=uint8_t;using UInt32=uint32_t;using UInt64=uint64_t;\n')
@@ -137,12 +153,14 @@ int main(){
         baseline = WORK / 'baseline'
         baseline.mkdir(exist_ok=True)
         for name in ['UserCacheResolver.hpp', 'UserSharedCache.hpp', 'UserSurfaceSyncResolver.hpp',
-                     'UserVideoDecodeResolver.hpp', 'UserVideoGuardResolver.hpp']:
+                     'UserVideoDecodeResolver.hpp']:
             text = subprocess.check_output(['git', 'show', args.baseline_ref + ':NootedRed/' + name],
                                            cwd=ROOT, text=True, timeout=10)
             (baseline / name).write_text(text)
-        baseline_flags = ['-DOPTIMIZED=0', '-I' + str(baseline)]
-    subprocess.run(['clang++', '-std=c++23', '-O2', '-DTEST_KERNEL_MEMCHR=' + str(int(args.kernel_memchr)),
+        buffered = 'scanBuffer' in (baseline / 'UserSharedCache.hpp').read_text()
+        baseline_flags = ['-DOPTIMIZED=' + str(int(buffered)), '-I' + str(baseline)]
+    codegen_flags = ['-mno-sse', '-mno-sse2', '-mno-mmx', '-fno-vectorize', '-fno-slp-vectorize'] if args.kernel_codegen else []
+    subprocess.run(['clang++', '-std=c++23', '-O2', *codegen_flags, '-DTEST_KERNEL_MEMCHR=' + str(int(args.kernel_memchr)),
                     *baseline_flags, '-I' + str(WORK / 'stubs'),
                     '-I' + str(ROOT / 'NootedRed'), str(file), '-o', str(executable)], check=True, timeout=60)
     result = subprocess.run([str(executable)], capture_output=True, text=True, timeout=60)

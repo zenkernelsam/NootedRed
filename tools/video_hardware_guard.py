@@ -5,44 +5,49 @@ import subprocess
 
 
 def guarded_service(registry, processes, service='Encoder'):
-    """同时核验核显、两个守卫版本以及守卫过的 XPC 服务证据。
+    """核验核显已纳入补丁计划、用户态管线已启用且无拒绝记录，
+    并且本 boot 至少有一个被筛选进程完成过补丁安装。
 
-    NRedVCNGuarded{Service}PID 只记录最近一次成功安装守卫的进程，
-    VT 服务按需启停，该 PID 可能已退出；属性只在守卫成功后写入，
-    非零即证明本 boot 守卫链曾完整安装，且每个新派生服务在映射缓存时
-    同样会被守卫。优先返回仍存活且命名匹配的记录 PID；否则只要本 boot
-    曾成功守卫过任一此类服务（属性非零）即视为前置条件满足。
+    新架构（steve 合并后）属性语义：NRedVCNUserEnabled 只在
+    shared_region_check 钩子成功路由后置 1；NRedVCNUserApplied /
+    NRedVCNUserDynamicApplied / NRedVCNGVASelectionFix 只在补丁
+    成功写入被筛选进程后发布，任一非零即证明本 boot 补丁链曾完整
+    执行。这些标记驻留在驱动服务对象上，目标 XPC 进程退出后仍保留，
+    不存在旧 Guarded*PID 的进程存活竞态。NRedVCNUserRejected 非零
+    或 VPF 隔离/动态拒绝即视为前置条件不满足。
     """
     if service not in ('Encoder', 'Decoder'):
         raise ValueError('未知视频服务')
-    expected=f'VT{service}XPCService'
-    stack=list(registry)
-    matches=[]
-    last_guarded=None
+    stack = list(registry)
+    device_seen = enabled_seen = applied_seen = False
+    device_id = 0
     while stack:
-        item=stack.pop()
-        if not isinstance(item,dict):
+        item = stack.pop()
+        if not isinstance(item, dict):
             continue
-        stack.extend(item.get('IORegistryEntryChildren',[]))
-        if item.get('NRedVCNDeviceID') not in (0x15e7,0x1636,0x1638,0x164c):
+        stack.extend(item.get('IORegistryEntryChildren', []))
+        candidate = item.get('NRedVCNDeviceID')
+        if candidate not in (0x15e7, 0x1636, 0x1638, 0x164c):
             continue
-        if item.get('NRedVCNGuardRollbackRetainedPage'):
-            raise RuntimeError('已报告不完整回滚，停止硬件测试并保留现场日志')
-        if (item.get('NRedVCNEncodeGuardRevision')!=1
-                or item.get('NRedVCNDecodeGuardRevision')!=1):
-            continue
-        pid=item.get(f'NRedVCNGuarded{service}PID')
-        if isinstance(pid,int) and pid>0:
-            last_guarded=pid
-            if Path(processes.get(pid,'')).name==expected:
-                matches.append(pid)
-    if len(matches)==1:
-        return matches[0]
-    if matches:
-        raise RuntimeError(f'当前 {expected} 守卫记录存在多条歧义结果，停止硬件测试')
-    if last_guarded:
-        return last_guarded
-    raise RuntimeError(f'尚未确认当前 {expected} 已完整安装第一阶段守卫，停止硬件测试')
+        device_seen = True
+        device_id = candidate
+        rejected = item.get('NRedVCNUserRejected')
+        if rejected:
+            raise RuntimeError(f'驱动报告补丁管线拒绝 NRedVCNUserRejected={rejected}，停止硬件测试')
+        if item.get('NRedVCNVPFQuarantined') or item.get('NRedVCNUserDynamicRejected'):
+            raise RuntimeError('驱动报告补丁被隔离或动态解析拒绝，停止硬件测试并保留现场日志')
+        if item.get('NRedVCNUserEnabled') == 1:
+            enabled_seen = True
+        if (item.get('NRedVCNUserApplied') or item.get('NRedVCNUserDynamicApplied')
+                or item.get('NRedVCNGVASelectionFix')):
+            applied_seen = True
+    if not device_seen:
+        raise RuntimeError('未在 IORegistry 找到受支持的 VCN 设备记录，停止硬件测试')
+    if not enabled_seen:
+        raise RuntimeError('用户态视频补丁管线未启用（NRedVCNUserEnabled!=1），停止硬件测试')
+    if not applied_seen:
+        raise RuntimeError('本 boot 尚无被筛选进程完成补丁安装，停止硬件测试')
+    return device_id
 
 
 def require_guard(service='Encoder'):

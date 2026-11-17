@@ -46,10 +46,11 @@ struct NRed {
 unsigned kernelMajor=25,kernelMinor=6;
 const PenguinWizardry::KernelVersion& currentKernelVersion(){static std::optional<PenguinWizardry::KernelVersion> current;return current.emplace(kernelMajor,kernelMinor);}
 bool requested=true,loadCompleted=true,has5000=true,has6000=true,hooks=true,engineAllocated=false;
+struct OSObjectLike {void release(){}};
 struct OSMetaClass {
     unsigned size=64;void* object=nullptr;
     unsigned getClassSize()const{return size;}
-    void* alloc(){return object;}
+    OSObjectLike* alloc(){return static_cast<OSObjectLike*>(object);}
 };
 struct OSMetaClassBase {const OSMetaClass* meta;const OSMetaClass* getMetaClass(){return meta;}};
 struct Pair {const OSMetaClass* oldClass;const OSMetaClass* newClass;};

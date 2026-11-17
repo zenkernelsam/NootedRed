@@ -14,12 +14,12 @@ from cache_resolver_data import ResolverData
 
 ROOT = Path(__file__).resolve().parents[1]
 WORK = ROOT / "build/vcn"
-GVA_CHOICE_ADDRESS = 0x7FFA0C59BBAC
+GVA_CHOICE_ADDRESS = 0x7FFA0C59FBAC
 GVA_CHOICE_SIZE = 1136
-GVA_CHOICE_SHA256 = {"b7c725552045a9db206ab2eed4edda7ea3d27a29de2feee782204c362764a33d", "de66696cb8cce0f7ac81f15a336250778da4d4486dd6fb0e4af33783b25e2201"}
+GVA_CHOICE_SHA256 = {"b7c725552045a9db206ab2eed4edda7ea3d27a29de2feee782204c362764a33d", "de66696cb8cce0f7ac81f15a336250778da4d4486dd6fb0e4af33783b25e2201", "e932f4a604b5510fb58f0b6211df8a683e7bea13e078b0e2d390dd5ead9dc6ea"}
 HASHES = {
     "__ZN11VACPFactory8createCPEP11_VAHWConfigP11VAIOConnectPP4VACp": {'e63a2259ad470bd088d623edc778be34f9f6630fc6156bf6cac808c381b15aa6', '4d6e96cf8b2b6ad3fb7aaa17b0b5a93c7649fed9308912caeaf851dbf3c19b84'},
-    "__ZN17VAAcceleratorInfo8identifyEjj": {'d7c579bce55c5724ec241f7f9abece9d0f23b1c30178d2f539fc0cabf41dc0bd', 'dd95fd9d1ea9740465bcefa6d68770a0ebbb6e8161e97939be19ff1c1671737e'},
+    "__ZN17VAAcceleratorInfo8identifyEjj": {'d7c579bce55c5724ec241f7f9abece9d0f23b1c30178d2f539fc0cabf41dc0bd', 'dd95fd9d1ea9740465bcefa6d68770a0ebbb6e8161e97939be19ff1c1671737e', '75d8727f3aaa4c61b001794812a84090a7e847c4f9cad3a4bd0318ede6a1bdee'},
     "__ZN18VAAddrLibInterface4initEP11VAIOConnectP13sHardwareInfo": {'b35bd96d6ca0b8bd9047af67fc3f0f77ef09242f684c65e17d4cee062af155ea', 'abafc0170bb2bfa7c333371531e68cc01c237d6ddf4f297711f71c6f0773a264'},
     "__ZN4Addr2V27Gfx9Lib20HwlConvertChipFamilyEjj": {'4a4a1d2337e580de8dcd851ec686179bc375639441ebf7020dcca69ea780f8fa', '4a4a1d2337e580de8dcd851ec686179bc375639441ebf7020dcca69ea780f8fa'},
     "__ZN4Addr3Lib6CreateEPK18_ADDR_CREATE_INPUTP19_ADDR_CREATE_OUTPUT": {'b52b9103faa80681fff4d65758ac961b9a3263add45c7597ea7074e61e4fb685', 'b0a123ffae9ff1b251077346fe12ba2640c007bdbb12ec15716855c5bf160063'},
@@ -98,28 +98,27 @@ def identify_payload(native, device_id, va_family):
 def main():
     global WORK
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--sequoia-cache', type=Path)
-    parser.add_argument('--safety-major', type=int, choices=[24, 25], help='生成对应系统的第一阶段安全守卫')
-    parser.add_argument('--safety-cache', type=Path)
-    parser.add_argument('--check-safety', action='store_true')
+    cache_args = parser.add_mutually_exclusive_group()
+    cache_args.add_argument('--sequoia-cache', type=Path)
+    cache_args.add_argument('--sonoma-cache', type=Path)
+    parser.add_argument('--refresh-encode', action='store_true', help='使用已核验的内嵌原生上下文刷新编码补丁')
+    parser.add_argument('--check', action='store_true', help='核对生成头，不写入生产数据')
     args = parser.parse_args()
-    if args.safety_major:
-        import build_video_capability_patch
-        options = ['--major', str(args.safety_major)]
-        if args.safety_cache: options += ['--cache', str(args.safety_cache)]
-        if args.check_safety: options += ['--check']
-        build_video_capability_patch.main(options)
+    if args.refresh_encode:
+        from refresh_video_encode_data import refresh
+        WORK.mkdir(parents=True, exist_ok=True)
+        refresh(compile_payload((ROOT / "tools/video_encode_params.s").read_text(), "encode-params"))
         return
-    if args.safety_cache or args.check_safety:
-        parser.error('--safety-cache / --check-safety 需要 --safety-major')
-    profile = json.loads((ROOT / 'tools/fixtures/sequoia-compat.json').read_text()) if args.sequoia_cache else None
+    system = 'sonoma' if args.sonoma_cache else 'sequoia'
+    directory = args.sonoma_cache or args.sequoia_cache
+    profile = json.loads((ROOT / f'tools/fixtures/{system}-compat.json').read_text()) if directory else None
     if profile:
-        WORK = ROOT / 'build/sequoia/video'
+        WORK = ROOT / f'build/{system}/video'
     WORK.mkdir(parents=True, exist_ok=True)
     capabilities = devices()
     if (0x1638, 5) not in capabilities:
         raise ValueError("缺少既有 Cezanne 配置")
-    cache = CacheReader(args.sequoia_cache, profile['uuid']) if profile else CacheReader()
+    cache = CacheReader(directory, profile['uuid']) if profile else CacheReader()
     hashes = {n: v['sha256'] for n, v in profile['video'].items()} if profile else HASHES
     contexts = profile['encodeContexts'] if profile else ENCODE_CONTEXTS
     gva_address, gva_size, gva_hash, gva_offset, gva_branch = (
@@ -178,8 +177,10 @@ def main():
             if gva_actual not in site_hash if isinstance(site_hash, (set, frozenset)) else gva_actual != site_hash:
                 continue
             if gva_choice[site_offset:site_offset + 6] == site_branch:
+                # Sonoma 构建的同一站点函数布局不同，跳转目标更远。
+                replacement = "0f8470000000" if args.sonoma_cache else "0f842a000000"
                 add("AppleGVA_AMDOnlyFallback", site_address + site_offset,
-                    site_branch, bytes.fromhex("0f842a000000"))
+                    site_branch, bytes.fromhex(replacement))
                 gva_function = (site_address, gva_choice)
                 gva_added = True
                 break
@@ -210,13 +211,15 @@ def main():
             add(name, address + offset, code[offset:offset + 8], patched, fairplay_decode=True)
         name = "__ZN18VAAddrLibInterface4initEP11VAIOConnectP13sHardwareInfo"
         address, code = function(name)
-        assert code[0x8B:0x92] == bytes.fromhex("4181fc8d000000")
-        add(name, address + 0x8E, b"\x8d", b"\x8e", fairplay_decode=True)
+        compare = 0x8E if args.sonoma_cache else 0x8B
+        assert code[compare:compare + 7] == bytes.fromhex("4181fc8d000000")
+        add(name, address + compare + 3, b"\x8d", b"\x8e", fairplay_decode=True)
         name = "__ZN11VACPFactory8createCPEP11_VAHWConfigP11VAIOConnectPP4VACp"
         address, code = function(name)
-        assert code[0x3F:0x44] == bytes.fromhex("83f9047317")
+        compare = 0x36 if args.sonoma_cache else 0x3F
+        assert code[compare:compare + 5] == bytes.fromhex("83f9047317")
         # APU 识别复用 VCN2 枚举 5；内容保护工厂需承接到已有 PSP 实现。
-        add(name, address + 0x41, b"\x04", b"\x05", fairplay_decode=True)
+        add(name, address + compare + 2, b"\x04", b"\x05", fairplay_decode=True)
         name = "__ZN4Addr3Lib6CreateEPK18_ADDR_CREATE_INPUTP19_ADDR_CREATE_OUTPUT"
         address, code = function(name)
         assert code[0xB5:0xBA] == bytes.fromhex("3d8d000000")
@@ -237,15 +240,14 @@ def main():
             address, code = function(name)
             assert code[0x2A:0x31] == bytes.fromhex("4869c0a4000000")
             add(name, address + 0x2A, code[0x2A:0x31], bytes.fromhex("4869c030000000"))
-        # 输入纹理的实际 pitch 可大于编码宽度；保留原生的字节到元素换算及半宽色度布局。
+        # 按实际纹理元素大小设置 P010 输入参数，同时保留原有 pitch 换算。
         name = "__ZN11Vcn2Encoder15setEncodeParamsEPvP15VAVendorTexture"
         address, code = function(name)
-        assert code[0x31:0x56] == bytes.fromhex(
-            "8b8a840000008b87240400000fafc105ff0000002500ffffff31d2f7f1894318d1e889431c")
-        pitch = compile_payload(".text\n.globl _payload\n_payload:\n"
-            "movl 0x80(%rdx), %eax\nmovl 0x84(%rdx), %ecx\nxorl %edx, %edx\ndivl %ecx\n"
-            "movl %eax, 0x18(%rbx)\nshrl %eax\nmovl %eax, 0x1c(%rbx)\n.org 37, 0x90\n", "encode-pitch")
-        add(name, address + 0x31, code[0x31:0x56], pitch)
+        assert len(code) == (148 if args.sonoma_cache else 138)
+        payload = compile_payload((ROOT / "tools/video_encode_params.s").read_text(), "encode-params")
+        payload += b'\x90' * (len(code) - len(payload))
+        assert len(payload) == len(code)
+        add(name, address, code, payload)
         code_section = next(s for s in sections if s[0] == "__text")
         text = cache.read(code_section[1], code_section[2])
         for old, new in [(0x2220221, 0x2020201), (0x6660661, 0x6060601)]:
@@ -292,7 +294,7 @@ def main():
             indices[label] = resolver.add(address, code, bytes(patched))
         locations = [(indices[r["label"]], r["address"]-functions[r["label"]][0]) for r in records]
         header = "// 由 tools/build_video_decode_patch.py 生成，不手工编辑。\n#pragma once\n#include <IOKit/IOTypes.h>\n#include <UserCacheResolver.hpp>\n"
-        namespace = 'UserSequoiaVideoData' if profile else 'UserVideoDecodeData'
+        namespace = ('UserSonomaVideoData' if args.sonoma_cache else 'UserSequoiaVideoData') if profile else 'UserVideoDecodeData'
         header += f"namespace {namespace} {{\n" + array("CacheMagic", cache.magic) + array("CacheUUID", cache.uuid)
         header += f"inline constexpr UInt64 CacheBase = 0x{cache.base:X}ULL;\n"
         header += ("using Patch = UserVideoDecodeData::Patch;\n" if profile else
@@ -341,7 +343,12 @@ def main():
         header += f"inline constexpr UInt32 MaxPatchSize = 448;\ninline constexpr UInt32 PageCount = {pages};\n}}\n"
         if profile:
             header = header.replace('#include <UserCacheResolver.hpp>', '#include <UserVideoDecodeData.hpp>')
-        (ROOT / f"NootedRed/{namespace}.hpp").write_text(header)
+        output = ROOT / f'NootedRed/{namespace}.hpp'
+        if args.check:
+            if output.read_text() != header:
+                raise ValueError(f'生成数据过期：{output}')
+        else:
+            output.write_text(header)
         (WORK / "user-patches.json").write_text(json.dumps({"records": records, "pages": pages,
                                                            "device_records": device_records,
                                                            "cacheUUID": cache.uuid.hex()}, indent=2) + "\n")

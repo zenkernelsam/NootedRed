@@ -1,5 +1,5 @@
 // DVPF：显示组级依赖规划；在共享 FeatureId 规划器之上提供组闭包和拒绝原因。
-// 只做旁路判断，不读取 boot-args、不访问地址空间、不安装补丁。
+// 纯决策层：不读取 boot-args、不访问地址空间，安装后端必须执行准入结果。
 #pragma once
 #include <VPF/DependencyPlanner.hpp>
 #include <VPF/DisplayManifest.hpp>
@@ -32,7 +32,6 @@ namespace VPF
         {DisplayGroup::KernelGFX9, "Kernel_GFX9", featureBit(FeatureId::KernelGFX9Capabilities), 0, 0, true},
         {DisplayGroup::KernelScanout, "Kernel_Scanout",
          featureBit(FeatureId::KernelDCNScanout) | featureBit(FeatureId::KernelFramebuffer), 0, 0, true},
-        {DisplayGroup::HDRResearch, "HDR_Research", featureBit(FeatureId::DisplayHDRResearch), 0, 0, false},
     };
 
     enum class DisplayRejectReason : UInt8
@@ -95,13 +94,9 @@ namespace VPF
         if (!displayFix) { return 0; }
         UInt32 groups = displayGroupBit(DisplayGroup::GLHwInfo) | displayGroupBit(DisplayGroup::GLDualQuad)
                         | displayGroupBit(DisplayGroup::KernelGFX9) | displayGroupBit(DisplayGroup::KernelScanout);
-        // Darwin 23 的 LegacyBlend/SubmitGuard 仍由旧精确 profile 执行；清单组会明确拒绝。
-        if (major >= 24) {
+        if (major >= 23 && major <= 25) {
             groups |= displayGroupBit(DisplayGroup::MetalRenderCore) | displayGroupBit(DisplayGroup::MetalScratch)
                       | displayGroupBit(DisplayGroup::MetalSubmitSafety);
-        }
-        else if (major == 23) {
-            groups |= displayGroupBit(DisplayGroup::MetalRenderCore) | displayGroupBit(DisplayGroup::MetalSubmitSafety);
         }
         return groups;
     }
@@ -199,7 +194,7 @@ namespace VPF
         }
 
         UInt32 requested = input.requestedGroups & allDisplayGroupBits;
-        // HDR 只在显式诊断模式下进入闭包；默认组不得被无意启用。
+        // 不可安装组只在显式实验模式下进入闭包；默认组不得被无意启用。
         for (UInt32 i = 0; i < groupCount; ++i) {
             const auto bit = displayGroupBit(groups[i].group);
             if ((requested & bit) != 0 && !groups[i].installable && !input.allowExperimental) {

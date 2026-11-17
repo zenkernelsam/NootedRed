@@ -5,21 +5,21 @@ from run_video_encode_test import build_cases
 
 
 def main():
-    baseline = build_cases(SimpleNamespace(hardware=False, hardware_decode=False))
+    baseline = build_cases(SimpleNamespace(hardware=False, hardware_decode=False, main10=False))
     assert baseline == [
         ("list", ["--list"]),
         ("software-h264", ["--software", "h264"]),
         ("software-hevc", ["--software", "hevc"]),
     ]
 
-    decoder = build_cases(SimpleNamespace(hardware=False, hardware_decode=True))
+    decoder = build_cases(SimpleNamespace(hardware=False, hardware_decode=True, main10=False))
     assert decoder == [
         ("list", ["--list"]),
         ("software-h264", ["--software", "h264", "--hardware-decode"]),
         ("software-hevc", ["--software", "hevc", "--hardware-decode"]),
     ]
 
-    both = build_cases(SimpleNamespace(hardware=True, hardware_decode=True))
+    both = build_cases(SimpleNamespace(hardware=True, hardware_decode=True, main10=False))
     assert len(both) == 7
     assert both[0] == ("list", ["--list"])
     assert all(options[-1] == "--hardware-decode" for _, options in both[1:])

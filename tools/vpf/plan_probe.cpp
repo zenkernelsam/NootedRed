@@ -17,6 +17,13 @@ static std::map<std::string, unsigned> properties;
 #include "user-cache-dynamic.hpp"
 
 // 生成数据以 namespace 组织，不能直接作为模板参数；用轻量 traits 暴露数组。
+struct VideoDarwin23
+{
+    static inline constexpr auto& devices   = UserSonomaVideoData::DevicePatches;
+    static inline constexpr auto& images    = UserSonomaVideoData::ResolverImages;
+    static inline constexpr auto& functions = UserSonomaVideoData::ResolverFunctions;
+};
+
 struct VideoDarwin24
 {
     static inline constexpr auto& devices   = UserSequoiaVideoData::DevicePatches;
@@ -29,20 +36,6 @@ struct VideoDarwin25
     static inline constexpr auto& devices   = UserVideoDecodeData::DevicePatches;
     static inline constexpr auto& images    = UserVideoDecodeData::ResolverImages;
     static inline constexpr auto& functions = UserVideoDecodeData::ResolverFunctions;
-};
-
-struct GuardDarwin24
-{
-    static inline constexpr auto& images         = UserVideoGuard24Data::ResolverImages;
-    static inline constexpr auto& functions      = UserVideoGuard24Data::ResolverFunctions;
-    static inline constexpr auto& sectionTargets = UserVideoGuard24Data::SectionTargets;
-};
-
-struct GuardDarwin25
-{
-    static inline constexpr auto& images         = UserVideoGuard25Data::ResolverImages;
-    static inline constexpr auto& functions      = UserVideoGuard25Data::ResolverFunctions;
-    static inline constexpr auto& sectionTargets = UserVideoGuard25Data::SectionTargets;
 };
 
 using VPF::FeatureManifest;
@@ -165,7 +158,7 @@ static void checkImages(const VerifiedPatchPlan& plan, const UserCacheResolver::
 }
 
 template<typename Data>
-static void testVideo(const char* os, const UInt32 osMask, const bool sequoia)
+static void testVideo(const char* os, const UInt32 osMask, const UInt32 major)
 {
     for (const auto& device : Data::devices) {
         cache(Data::images, Data::functions, true);
@@ -175,7 +168,7 @@ static void testVideo(const char* os, const UInt32 osMask, const bool sequoia)
         UserVideoDecodeResolver::Plan legacy;
         char                          label[128];
         std::snprintf(label, sizeof(label), "video %s device %04X", os, device.deviceID);
-        check(UserVideoDecodeResolver::resolve(input, base, device.patches, legacy, sequoia), label);
+        check(UserVideoDecodeResolver::resolve(input, base, device.patches, legacy, major), label);
         const auto* manifest = VPF::ManifestData::find(VPF::FeatureId::Vcn2Decode, osMask, device.deviceID);
         check(manifest != nullptr, label);
         if (!manifest) { continue; }
@@ -185,27 +178,6 @@ static void testVideo(const char* os, const UInt32 osMask, const bool sequoia)
         checkImages(plan, legacy.images, manifest->resolver.imageCount, *manifest, label);
         emitPlan("Vcn2Decode", os, device.deviceID, PlanState::AllOriginal, plan);
     }
-}
-
-template<typename Data>
-static void testGuard(const char* os, const UInt32 osMask, const UInt32 major)
-{
-    constexpr auto targets = sizeof(Data::sectionTargets) / sizeof(Data::sectionTargets[0]);
-    cache(Data::images, Data::functions, true, Data::sectionTargets, targets);
-    UserSharedCache::Input input{reader, {}};
-    UInt8                    scan[UserSharedCache::Input::ScanSize];
-    input.scanBuffer = scan;
-    UserVideoGuardResolver::Plan legacy;
-    char                          label[128];
-    std::snprintf(label, sizeof(label), "guard %s", os);
-    check(UserVideoGuardResolver::resolve(input, base, major, legacy), label);
-    const auto* manifest = VPF::ManifestData::find(VPF::FeatureId::Vcn2SafetyGuard, osMask, 0);
-    check(manifest != nullptr, label);
-    if (!manifest) { return; }
-    VerifiedPatchPlan plan;
-    check(VPF::adaptGuard(plan, *manifest, base, input.cache, legacy), label);
-    checkPlan(plan, legacy.patches, legacy.count, legacy.reads, label);
-    emitPlan("Vcn2SafetyGuard", os, 0, legacy.installed ? PlanState::AllPatched : PlanState::AllOriginal, plan);
 }
 
 static void testSequoiaSurface()
@@ -231,6 +203,39 @@ static void testSequoiaSurface()
         check(VPF::adaptSurface(plan, *manifest, base, legacy.input.cache, legacy, 4, PlanState::AllOriginal), label);
         checkPlan(plan, legacy.patches, 4, legacy.reads, label);
         emitPlan("DisplaySRD", "Darwin24", device.deviceID, PlanState::AllOriginal, plan);
+    }
+}
+
+static void testSonomaSurface()
+{
+    using namespace UserSonomaSurfaceData;
+    constexpr auto functionCount = sizeof(ResolverFunctions) / sizeof(ResolverFunctions[0]);
+    for (const auto& device : DevicePatches) {
+        cache(ResolverImages, ResolverFunctions, false);
+        const auto constant = destination(ResolverFunctions[0].originalRefs[0], ResolverFunctions, functionCount);
+        blocks[constant].resize(16);
+        word32(constant, 0x40400000);
+        const auto dump = destination(ResolverFunctions[0].originalRefs[2], ResolverFunctions, functionCount);
+        put(dump, UserSurfaceSyncData::NativeDump, sizeof(UserSurfaceSyncData::NativeDump));
+
+        UserSurfaceSyncResolver::Plan legacy;
+        char                          label[128];
+        std::snprintf(label, sizeof(label), "surface Darwin23 device %04X", device.deviceID);
+        check((
+                  [&]
+                  {
+                      legacy.input            = {reader, {}};
+                      legacy.input.scanBuffer = legacy.scan;
+                      return UserSurfaceSyncResolver::resolveMetal(legacy.input, base, device.deviceID, legacy, 23);
+                  }()),
+              label);
+        const auto* manifest = VPF::ManifestData::find(VPF::FeatureId::DisplaySRD, VPF::OsDarwin23, device.deviceID);
+        check(manifest != nullptr, label);
+        if (!manifest) { continue; }
+        VerifiedPatchPlan plan;
+        check(VPF::adaptSurface(plan, *manifest, base, legacy.input.cache, legacy, 4, PlanState::AllOriginal), label);
+        checkPlan(plan, legacy.patches, 4, legacy.reads, label);
+        emitPlan("DisplaySRD", "Darwin23", device.deviceID, PlanState::AllOriginal, plan);
     }
 }
 
@@ -269,16 +274,35 @@ static void testScratch()
     }
 }
 
+// 站点按半开区间 [address, address + size) 判定重叠：部分重叠、包含和重复均拒绝，相邻允许。
+static void testSiteOverlap()
+{
+    static const UInt8 bytes[16]{};
+    const UInt64       start = 0x180000000ULL;
+    VerifiedPatchPlan  plan;
+    plan.reset(start, {start, 0x1000});
+    check(plan.addSite(start + 0x100, 0x100, 8, VPF::NoFunction, 0, bytes, bytes), "overlap first site");
+    check(!plan.addSite(start + 0x104, 0x104, 8, VPF::NoFunction, 0, bytes, bytes), "overlap partial tail");
+    check(!plan.addSite(start + 0xFC, 0xFC, 8, VPF::NoFunction, 0, bytes, bytes), "overlap partial head");
+    check(!plan.addSite(start + 0x102, 0x102, 2, VPF::NoFunction, 0, bytes, bytes), "overlap contained");
+    check(!plan.addSite(start + 0xF8, 0xF8, 16, VPF::NoFunction, 0, bytes, bytes), "overlap containing");
+    check(!plan.addSite(start + 0x100, 0x100, 8, VPF::NoFunction, 0, bytes, bytes), "overlap duplicate");
+    check(plan.addSite(start + 0x108, 0x108, 4, VPF::NoFunction, 0, bytes, bytes), "overlap adjacent after");
+    check(plan.addSite(start + 0xF8, 0xF8, 8, VPF::NoFunction, 0, bytes, bytes), "overlap adjacent before");
+    check(plan.siteCount() == 3, "overlap site count");
+}
+
 int main(int argc, char** argv)
 {
     jsonMode = argc > 1 && std::strcmp(argv[1], "--json") == 0;
     if (jsonMode) { std::printf("{\"schemaVersion\":1,\"kind\":\"vpf.plans\",\"plans\":["); }
-    testVideo<VideoDarwin24>("Darwin24", VPF::OsDarwin24, true);
-    testVideo<VideoDarwin25>("Darwin25", VPF::OsDarwin25, false);
-    testGuard<GuardDarwin24>("Darwin24", VPF::OsDarwin24, 24);
-    testGuard<GuardDarwin25>("Darwin25", VPF::OsDarwin25, 25);
+    testVideo<VideoDarwin23>("Darwin23", VPF::OsDarwin23, 23);
+    testVideo<VideoDarwin24>("Darwin24", VPF::OsDarwin24, 24);
+    testVideo<VideoDarwin25>("Darwin25", VPF::OsDarwin25, 25);
     testSequoiaSurface();
+    testSonomaSurface();
     testScratch();
+    testSiteOverlap();
     if (jsonMode) { std::printf("]}\n"); }
     if (failures) {
         std::fprintf(stderr, "FAILED: %u checks\n", failures);

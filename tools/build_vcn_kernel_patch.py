@@ -7,19 +7,23 @@ import struct
 import subprocess
 
 from audit_video_driver import disk_image, vtable
+from kext_binary import driver
 from metal_cache import array
 
 ROOT = Path(__file__).resolve().parents[1]
 WORK = ROOT / "build/vcn"
-DRIVER = Path("/System/Library/Extensions/AMDRadeonX6000.kext/Contents/MacOS/AMDRadeonX6000")
+DRIVER = driver("AMDRadeonX6000")
 GETTERS = {
-    '5000': ['554889e58a870e03000024015dc3', '554889e5488b87400602005dc3', '554889e58b87500502005dc3'],
-    '6000': ['554889e58a870e03000024015dc3', '554889e5488b87480602005dc3', '554889e58b87480502005dc3'],
+    # getter[0] 的 `andb $0x1,%al`(2401) 掩码在 24H32 驱动中被优化掉；两种形态均核实接受。
+    '5000': [('554889e58a870e03000024015dc3', '554889e58a870e0300005dc3'),
+             '554889e5488b87400602005dc3', '554889e58b87500502005dc3'],
+    '6000': [('554889e58a870e03000024015dc3', '554889e58a870e0300005dc3'),
+             '554889e5488b87480602005dc3', '554889e58b87480502005dc3'],
 }
 
 
 def abi_guards(version):
-    path = Path(f"/System/Library/Extensions/AMDRadeonX{version}.kext/Contents/MacOS/AMDRadeonX{version}")
+    path = driver(f"AMDRadeonX{version}")
     _, read = disk_image(path)
     names = {}
     for line in subprocess.run(['nm', '-n', str(path)], check=True, capture_output=True, text=True, timeout=60).stdout.splitlines():
@@ -56,7 +60,10 @@ def abi_guards(version):
                     break
             if not code.endswith(b'\xc3') or len(code) > 32 or read(address, len(code)) != code:
                 raise ValueError('getter 内容不完整')
-            if code.hex() != GETTERS[version][len([entry for entry in result if entry['code']])]:
+            idx = len([entry for entry in result if entry['code']])
+            expected = GETTERS[version][idx]
+            if isinstance(expected, str): expected = (expected,)
+            if code.hex() not in expected:
                 raise ValueError('getter 字段布局变化，需要重新核实')
         result.append({'slot': offset, 'target': symbol, 'code': code.hex()})
     return hardware['symbol'], result

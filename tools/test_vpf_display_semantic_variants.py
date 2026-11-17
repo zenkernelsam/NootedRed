@@ -21,11 +21,11 @@ class DisplaySemanticTests(unittest.TestCase):
         cls.report = semantics.build_report(cls.sites)
 
     def test_report_is_exact_and_emits_nothing(self):
-        self.assertEqual(self.report['siteCount'], 69)
-        self.assertEqual(self.report['exactValidated'], 69)
+        self.assertEqual(self.report['siteCount'], 94)
+        self.assertEqual(self.report['exactValidated'], 94)
         self.assertEqual(self.report['rejected'], [])
         self.assertEqual(self.report['emittedManifests'], 0)
-        self.assertEqual(len(self.report['dequantizationCandidates']), 6)
+        self.assertEqual(len(self.report['dequantizationCandidates']), 12)
         for candidate in self.report['dequantizationCandidates']:
             self.assertTrue(candidate['bounded'])
             self.assertTrue(candidate['requiresReview'])

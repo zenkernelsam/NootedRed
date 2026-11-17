@@ -3,7 +3,7 @@ name: CI
 on:
   push:
     branches:
-      - "*"
+      - "**"
     tags:
       - "v*"
   pull_request:
@@ -19,46 +19,31 @@ jobs:
     env:
       AppleForgePath: ${{ github.workspace }}/AppleForge
     steps:
-      - if: github.repository != 'ChefKissInc/NootedRed'
-        run: |
-          cat << 'EOF' >> $GITHUB_STEP_SUMMARY
-          # 🛑 STOP!
-
-          ## You were likely sent here by an unofficial, outdated and SHIT tutorial
-
-          This project is actually the result of one sole developer, [Visual](https://github.com/VisualEhrmanntraut) (me).
-
-          **WE DO NOT RECOMMEND, ENDORSE, OR WORK WITH THEM!** They contain incorrect information, drive users away from official documentation, and hurt this project by preventing us from receiving support through donations.
-
-          You **do not** need to fork this repository or log into GitHub to download this!
-
-          👉 Please use the official links (linked below, continue reading).
-          Also spread the word if you want! :)
-
-          ### ❤️ Support our Hard Work by Donating
-
-          *   **Using PayPal or credit/debit card:** [through ko-fi](https://ko-fi.com/chefkiss)
-          *   **Using BTC:** `bc1qgu56kptepex2csuzl5nhzc4vxuj8c6ggjzhcem`
-          *   **Using SOL:** `4PJU3iB5rimN9BNcpzduvmTnptJyedZiAd23so33SAdi`
-          *   **Using ETH:** `0x038A25849c23Bc5A736484351a8B6Ad71bC46676`
-
-          With enough support, I could even give back to the volunteers (if they wish).
-
-          ### 🔬 Official Resources
-
-          *   🚀 **Bleeding-Edge / Nightly Builds (No login required!) + Usage information**: [Click here](https://chefkiss.dev/applehax/nootedred/)
-          *   📚 **Official ChefKiss Guide**: [Click here](https://chefkiss.dev/guides/hackintosh/)
-          *   ⬇️ **Official Stable Releases**: [Click here](https://github.com/ChefKissInc/NootedRed/releases)
-          *   💬 **Telegram supergroup**: Link located in the navigation bar of the [official website](https://chefkiss.dev) (not linked directly to prevent scraper-powered bots)
-
-          **Bonus:** Me and [my colleague](https://github.com/chris-pcguy) have created a cross-platform (Windows, Linux, macOS) iOS emulator called Inferno, and this year it will also support macOS! [Click here](https://chefkiss.dev/applehax/inferno/)
-
-          Happy Hackintoshing!
-          EOF
-          exit 1
       - uses: actions/checkout@v7
         with:
           submodules: "recursive"
+      - name: Test shared-cache coordinator
+        run: |
+          python3 tools/test_display_coordinator_kext.py
+          python3 tools/test_display_cross_module_gate.py
+          python3 tools/test_display_cross_module_gate.py --sanitize
+          python3 tools/test_process_filter.py
+          python3 tools/test_fvrc_mapping_probe.py
+          python3 tools/test_rejected_caches.py
+          python3 tools/test_fvrc_registry.py
+          python3 tools/test_fvrc_hot_path.py
+          python3 tools/test_fvrc_video.py
+      - name: Test experimental VP9
+        run: |
+          python3 tools/test_vp9_parser.py
+          python3 tools/test_vp9_dynamic.py
+          python3 tools/test_vt_decoder_admission.py
+          python3 tools/test_video_cache_dynamic.py --vp9 --sanitize
+          python3 tools/test_vp9_probe.py --offline
+          python3 tools/test_vp9_compare.py
+          python3 tools/test_vcn_native_load.py
+          python3 tools/test_phase_timing.py
+          python3 tools/test_vcn_power_trace.py
       - name: Test EC backlight service
         run: |
           python3 tools/test_ec_backlight_service.py

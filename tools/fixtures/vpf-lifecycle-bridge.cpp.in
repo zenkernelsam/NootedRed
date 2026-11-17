@@ -38,19 +38,14 @@ LEDGER
 
 using MapDestroy = void (*)(vm_map_t);
 static MapDestroy originalMapDestroy = nullptr;
+namespace UserPatchCoordinator { inline void forgetMap(vm_map_t); }
 MAP_DESTROY
 MAP_TARGET
 
-static bool fairPlayDriverOnly = false, sequoia = false;
 static const int* devicePatches = nullptr;
-#include <UserLegacyCompat.hpp>
-static const UserLegacyCompat::Profile* legacyProfile = nullptr;
-namespace UserLegacyData
-{
-    static const UserLegacyCompat::Profile* video(UInt32, UInt32) { return nullptr; }
-}
 namespace UserVideoDecodeData { static const int* findDevice(UInt32) { static int value; return &value; } }
 namespace UserSequoiaVideoData { static const int* findDevice(UInt32 id) { return UserVideoDecodeData::findDevice(id); } }
+namespace UserSonomaVideoData { static const int* findDevice(UInt32 id) { return UserVideoDecodeData::findDevice(id); } }
 struct Version { UInt32 major() const { return 25; } };
 static Version currentKernelVersion() { return {}; }
 namespace VCNCapabilities
@@ -75,11 +70,31 @@ static void wrappedSharedRegionCheck() { }
 namespace UserPatchCoordinator
 {
     using PatchCallback = int (*)(void*, void*, int);
+    struct Transaction;
     inline void clearVideo() {}
+    inline void forgetMap(vm_map_t) {}
     inline void registerVideo(const PatchCallback) {}
+    template <typename F> inline void registerVideo(F&&) {}
 }
 struct SharedRegionCheckArgs { UInt64 startAddress; };
 static int patchSharedRegion(proc_t, SharedRegionCheckArgs*, int result) { return result; }
+static int patchSharedRegion(proc_t, SharedRegionCheckArgs*, int result, UserPatchCoordinator::Transaction*)
+{
+    return result;
+}
+static bool rejectTrace = false;
+static struct RejectedCachesStub { bool init() { return true; } } rejectedCaches;
+static UInt32 darwinMajor = 0;
+namespace UserSonomaVideoData { static const int* findDevice(UInt32 id); }
+namespace UserVP9DecodeResolver { struct Plan { UInt32 reserved; }; }
+namespace VP9
+{
+    static bool enabled = false;
+    static IOLock* lock = nullptr;
+    static UserVP9DecodeResolver::Plan* plan = nullptr;
+    static bool traceEnabled = false;
+    static void publishState(UInt32) {}
+}
 
 static std::array<UInt8, 64> destroyEntry{};
 static unsigned destroyCalls = 0;
