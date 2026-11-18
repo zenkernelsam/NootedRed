@@ -7,9 +7,15 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		ECB100010000000000000001 /* ECBacklight.cpp in Sources */ = {isa = PBXBuildFile; fileRef = ECB100020000000000000001 /* ECBacklight.cpp */; };
 		EF0400010000000000000005 /* UserVideoDecode.cpp in Sources */ = {isa = PBXBuildFile; fileRef = EF0400020000000000000005 /* UserVideoDecode.cpp */; };
+		EF0400050000000000000001 /* UserMtlDualQuad.cpp in Sources */ = {isa = PBXBuildFile; fileRef = EF0400060000000000000001 /* UserMtlDualQuad.cpp */; };
 		EF0400010000000000000002 /* VCN.cpp in Sources */ = {isa = PBXBuildFile; fileRef = EF0400020000000000000002 /* VCN.cpp */; };
 		EF0400010000000000000001 /* UserSurfaceSync.cpp in Sources */ = {isa = PBXBuildFile; fileRef = EF0400020000000000000001 /* UserSurfaceSync.cpp */; };
+		EF0400010000000000000020 /* UserPatchCoordinator.cpp in Sources */ = {isa = PBXBuildFile; fileRef = EF0400020000000000000020 /* UserPatchCoordinator.cpp */; };
+		EF0400010000000000000022 /* UserProcessFilter.cpp in Sources */ = {isa = PBXBuildFile; fileRef = EF0400020000000000000022 /* UserProcessFilter.cpp */; };
+		EF0400010000000000000021 /* KernelDisplayEvidence.cpp in Sources */ = {isa = PBXBuildFile; fileRef = EF0400020000000000000021 /* KernelDisplayEvidence.cpp */; };
+		EF0400010000000000000010 /* UserOpenGL.cpp in Sources */ = {isa = PBXBuildFile; fileRef = EF0400020000000000000010 /* UserOpenGL.cpp */; };
 		1C748C2D1C21952C0024EED2 /* Plugin.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 1C748C2C1C21952C0024EED2 /* Plugin.cpp */; };
 		4003B5C330265153006F74E8 /* SurfaceInfo.hpp in Sources */ = {isa = PBXBuildFile; fileRef = 4003B5C230265145006F74E8 /* SurfaceInfo.hpp */; };
 		400909902E9932F2006EC1EA /* HWMemory.hpp in Headers */ = {isa = PBXBuildFile; fileRef = 4009098F2E9932F2006EC1EA /* HWMemory.hpp */; };
@@ -110,16 +116,31 @@
 		CE8DA0832517C41A008C44E8 /* libkmod.a in Frameworks */ = {isa = PBXBuildFile; fileRef = CE8DA0822517C41A008C44E8 /* libkmod.a */; };
 		CEA03B5E20EE825A00BA842F /* NRed.cpp in Sources */ = {isa = PBXBuildFile; fileRef = CEA03B5C20EE825A00BA842F /* NRed.cpp */; };
 		CEA03B5F20EE825A00BA842F /* NRed.hpp in Headers */ = {isa = PBXBuildFile; fileRef = CEA03B5D20EE825A00BA842F /* NRed.hpp */; };
+		CEA100A0000000000000000A01 /* NRedAudio.cpp in Sources */ = {isa = PBXBuildFile; fileRef = CEA100A0000000000000000A03 /* NRedAudio.cpp */; };
+		CEA100A0000000000000000A02 /* NRedAudio.hpp in Headers */ = {isa = PBXBuildFile; fileRef = CEA100A0000000000000000A04 /* NRedAudio.hpp */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		ECB100020000000000000001 /* ECBacklight.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ECBacklight.cpp; sourceTree = "<group>"; };
+		ECB100020000000000000002 /* ECBacklight.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ECBacklight.hpp; sourceTree = "<group>"; };
 		EF0400020000000000000007 /* UserVideoDecodeData.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = UserVideoDecodeData.hpp; sourceTree = "<group>"; };
 		EF0400020000000000000006 /* UserVideoDecode.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = UserVideoDecode.hpp; sourceTree = "<group>"; };
+		EF0400060000000000000001 /* UserMtlDualQuad.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = UserMtlDualQuad.cpp; sourceTree = "<group>"; };
+		EF0400060000000000000002 /* UserMtlDualQuad.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = UserMtlDualQuad.hpp; sourceTree = "<group>"; };
+		EF0400060000000000000003 /* UserMtlDualQuadData.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = UserMtlDualQuadData.hpp; sourceTree = "<group>"; };
+		EF0400060000000000000004 /* UserMtlDualQuadTxn.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = UserMtlDualQuadTxn.hpp; sourceTree = "<group>"; };
 		EF0400020000000000000005 /* UserVideoDecode.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = UserVideoDecode.cpp; sourceTree = "<group>"; };
 		EF0400020000000000000004 /* VCNKernelData.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = VCNKernelData.hpp; sourceTree = "<group>"; };
 		EF0400020000000000000003 /* VCN.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = VCN.hpp; sourceTree = "<group>"; };
 		EF0400020000000000000002 /* VCN.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = VCN.cpp; sourceTree = "<group>"; };
 		EF0400020000000000000001 /* UserSurfaceSync.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = UserSurfaceSync.cpp; sourceTree = "<group>"; };
+		EF0400020000000000000020 /* UserPatchCoordinator.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = UserPatchCoordinator.cpp; sourceTree = "<group>"; };
+		EF0400030000000000000020 /* UserPatchCoordinator.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = UserPatchCoordinator.hpp; sourceTree = "<group>"; };
+		EF0400020000000000000022 /* UserProcessFilter.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = UserProcessFilter.cpp; sourceTree = "<group>"; };
+		EF0400030000000000000022 /* UserProcessFilter.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = UserProcessFilter.hpp; sourceTree = "<group>"; };
+		EF0400020000000000000021 /* KernelDisplayEvidence.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = KernelDisplayEvidence.cpp; sourceTree = "<group>"; };
+		EF0400030000000000000021 /* KernelDisplayEvidence.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = KernelDisplayEvidence.hpp; sourceTree = "<group>"; };
+		EF0400020000000000000010 /* UserOpenGL.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = UserOpenGL.cpp; sourceTree = "<group>"; };
 		EF0400030000000000000001 /* UserSurfaceSync.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = UserSurfaceSync.hpp; sourceTree = "<group>"; };
 		EF0400040000000000000001 /* UserSurfaceSyncData.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = UserSurfaceSyncData.hpp; sourceTree = "<group>"; };
 		1C748C271C21952C0024EED2 /* NootedRed.kext */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = NootedRed.kext; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -183,7 +204,7 @@
 		4030EB282E37E1D90070E610 /* gc_9_3_rlc_srlist_gpm_mem.bin */ = {isa = PBXFileReference; lastKnownFileType = archive.macbinary; path = gc_9_3_rlc_srlist_gpm_mem.bin; sourceTree = "<group>"; };
 		4030EB292E37E1D90070E610 /* gc_9_3_rlc_srlist_srm_mem.bin */ = {isa = PBXFileReference; lastKnownFileType = archive.macbinary; path = gc_9_3_rlc_srlist_srm_mem.bin; sourceTree = "<group>"; };
 		4030EB2A2E37E1D90070E610 /* gc_9_3_rlc_ucode.bin */ = {isa = PBXFileReference; lastKnownFileType = archive.macbinary; path = gc_9_3_rlc_ucode.bin; sourceTree = "<group>"; };
-		4030EB2B2E37E1D90070E610 /* LICENSE */ = {isa = PBXFileReference; lastKnownFileType = text; path = LICENSE; sourceTree = "<group>"; };
+		4030EB2B2E37E1D90070E610 /* LICENSE */ = {isa = PBXFileReference; lastKnownFileType = text; path = LICENSE.md; sourceTree = "<group>"; };
 		4030EB2D2E37E1D90070E610 /* psp_asd.bin */ = {isa = PBXFileReference; lastKnownFileType = archive.macbinary; path = psp_asd.bin; sourceTree = "<group>"; };
 		4030EB2E2E37E1D90070E610 /* psp_auc.bin */ = {isa = PBXFileReference; lastKnownFileType = archive.macbinary; path = psp_auc.bin; sourceTree = "<group>"; };
 		4030EB2F2E37E1D90070E610 /* psp_dtm.bin */ = {isa = PBXFileReference; lastKnownFileType = archive.macbinary; path = psp_dtm.bin; sourceTree = "<group>"; };
@@ -282,6 +303,8 @@
 		CE8DA0822517C41A008C44E8 /* libkmod.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libkmod.a; path = MacKernelSDK/Library/x86_64/libkmod.a; sourceTree = SOURCE_ROOT; };
 		CEA03B5C20EE825A00BA842F /* NRed.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = NRed.cpp; sourceTree = "<group>"; };
 		CEA03B5D20EE825A00BA842F /* NRed.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = NRed.hpp; sourceTree = "<group>"; };
+		CEA100A0000000000000000A03 /* NRedAudio.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = NRedAudio.cpp; sourceTree = "<group>"; };
+		CEA100A0000000000000000A04 /* NRedAudio.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = NRedAudio.hpp; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -325,9 +348,20 @@
 				407068652E966678004E0761 /* Personalities */,
 				408B3DD62CDFA41A00CAE5D2 /* Regs */,
 				EF0400020000000000000001 /* UserSurfaceSync.cpp */,
+				EF0400020000000000000020 /* UserPatchCoordinator.cpp */,
+				EF0400030000000000000020 /* UserPatchCoordinator.hpp */,
+				EF0400020000000000000022 /* UserProcessFilter.cpp */,
+				EF0400030000000000000022 /* UserProcessFilter.hpp */,
+				EF0400020000000000000021 /* KernelDisplayEvidence.cpp */,
+				EF0400030000000000000021 /* KernelDisplayEvidence.hpp */,
+				EF0400020000000000000010 /* UserOpenGL.cpp */,
 				EF0400020000000000000007 /* UserVideoDecodeData.hpp */,
 				EF0400020000000000000006 /* UserVideoDecode.hpp */,
 				EF0400020000000000000005 /* UserVideoDecode.cpp */,
+				EF0400060000000000000001 /* UserMtlDualQuad.cpp */,
+				EF0400060000000000000002 /* UserMtlDualQuad.hpp */,
+				EF0400060000000000000003 /* UserMtlDualQuadData.hpp */,
+				EF0400060000000000000004 /* UserMtlDualQuadTxn.hpp */,
 				EF0400020000000000000004 /* VCNKernelData.hpp */,
 				EF0400020000000000000003 /* VCN.hpp */,
 				EF0400020000000000000002 /* VCN.cpp */,
@@ -346,6 +380,8 @@
 				409127632CE2F2D2004DBDB5 /* ASICCaps.hpp */,
 				40F39FDB2CDD6087007AE975 /* Backlight.hpp */,
 				40F39FDD2CDD60A3007AE975 /* Backlight.cpp */,
+				ECB100020000000000000001 /* ECBacklight.cpp */,
+				ECB100020000000000000002 /* ECBacklight.hpp */,
 				401B4A012CF43589002B75A6 /* DebugEnabler.hpp */,
 				401B49FE2CF434FC002B75A6 /* DebugEnabler.cpp */,
 				409127672CE2F360004DBDB5 /* DevCaps.hpp */,
@@ -359,6 +395,8 @@
 				4068B3B92E97D805007B46BB /* Kexts.cpp */,
 				CEA03B5D20EE825A00BA842F /* NRed.hpp */,
 				CEA03B5C20EE825A00BA842F /* NRed.cpp */,
+				CEA100A0000000000000000A04 /* NRedAudio.hpp */,
+				CEA100A0000000000000000A03 /* NRedAudio.cpp */,
 				1C748C2C1C21952C0024EED2 /* Plugin.cpp */,
 				40FC5FD829BF995E00367F9D /* X5000.hpp */,
 				40FC5FD729BF995E00367F9D /* X5000.cpp */,
@@ -624,6 +662,7 @@
 				4014D9722C74AA7000FDE986 /* ObjectField.hpp in Headers */,
 				4091276D2CE2F681004DBDB5 /* SignalTypes.hpp in Headers */,
 				CEA03B5F20EE825A00BA842F /* NRed.hpp in Headers */,
+				CEA100A0000000000000000A02 /* NRedAudio.hpp in Headers */,
 				409127662CE2F2F4004DBDB5 /* PowerPlay.hpp in Headers */,
 				408B3DE52CDFA77800CAE5D2 /* SMUIO.hpp in Headers */,
 				408B3DE92CDFA81200CAE5D2 /* RenoirPPSMC.hpp in Headers */,
@@ -759,7 +798,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/bash;
-			shellScript = "cd \"${TARGET_BUILD_DIR}\"\n\ncp $PROJECT_DIR/LICENSE ./\ncp $PROJECT_DIR/README.md ./\ndist=(\"$FULL_PRODUCT_NAME\" \"LICENSE\" \"README.md\")\nif [ -d \"$DWARF_DSYM_FILE_NAME\" ]; then dist+=(\"$DWARF_DSYM_FILE_NAME\"); fi\n\narchive=\"${PRODUCT_NAME}-${MODULE_VERSION}-$(echo $CONFIGURATION | tr /a-z/ /A-Z/ | tr /\\ / /_/).zip\"\nrm -rf *.zip\nif [ \"$CONFIGURATION\" == \"Release\" ] || [ \"$CONFIGURATION\" == \"Research Release\" ]; then\n  strip -x -T \"${EXECUTABLE_PATH}\" &>/dev/null || strip -x \"${EXECUTABLE_PATH}\"\nfi\nzip -qry -FS \"${archive}\" \"${dist[@]}\"\n";
+			shellScript = "cd \"${TARGET_BUILD_DIR}\"\n\ncp \"$PROJECT_DIR/LICENSE.md\" ./LICENSE\ncp \"$PROJECT_DIR/README.md\" ./\ndist=(\"$FULL_PRODUCT_NAME\" \"LICENSE\" \"README.md\")\nif [ -d \"$DWARF_DSYM_FILE_NAME\" ]; then dist+=(\"$DWARF_DSYM_FILE_NAME\"); fi\n\narchive=\"${PRODUCT_NAME}-${MODULE_VERSION}-$(echo $CONFIGURATION | tr /a-z/ /A-Z/ | tr /\\ / /_/).zip\"\nrm -rf *.zip\nif [ \"$CONFIGURATION\" == \"Release\" ] || [ \"$CONFIGURATION\" == \"Research Release\" ]; then\n  strip -x -T \"${EXECUTABLE_PATH}\" &>/dev/null || strip -x \"${EXECUTABLE_PATH}\"\nfi\nzip -qry -FS \"${archive}\" \"${dist[@]}\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -769,7 +808,12 @@
 			buildActionMask = 2147483647;
 			files = (
 				EF0400010000000000000001 /* UserSurfaceSync.cpp in Sources */,
+				EF0400010000000000000020 /* UserPatchCoordinator.cpp in Sources */,
+				EF0400010000000000000022 /* UserProcessFilter.cpp in Sources */,
+				EF0400010000000000000021 /* KernelDisplayEvidence.cpp in Sources */,
+				EF0400010000000000000010 /* UserOpenGL.cpp in Sources */,
 				EF0400010000000000000005 /* UserVideoDecode.cpp in Sources */,
+				EF0400050000000000000001 /* UserMtlDualQuad.cpp in Sources */,
 				EF0400010000000000000002 /* VCN.cpp in Sources */,
 				4068898B2A229BF600028D22 /* PatcherPlus.cpp in Sources */,
 				40A02CF82EAE40BD00ECB6DA /* KernelVersion.cpp in Sources */,
@@ -783,6 +827,7 @@
 				4068B3BA2E97D805007B46BB /* Kexts.cpp in Sources */,
 				401B49FF2CF43510002B75A6 /* DebugEnabler.cpp in Sources */,
 				40F39FDE2CDD60A4007AE975 /* Backlight.cpp in Sources */,
+				ECB100010000000000000001 /* ECBacklight.cpp in Sources */,
 				40F43C6A302BC94700A7DDE9 /* BiosParser.cpp in Sources */,
 				4054608C2CDBDF8C007865E5 /* AGDP.cpp in Sources */,
 				40FC5FDD29BF996900367F9D /* HWLibs.cpp in Sources */,
@@ -795,6 +840,7 @@
 				40FC5FD929BF995E00367F9D /* X5000.cpp in Sources */,
 				40AF79773030BCC00005EFAB /* AmdAtomPspDirectoryDummy.cpp in Sources */,
 				CEA03B5E20EE825A00BA842F /* NRed.cpp in Sources */,
+				CEA100A0000000000000000A01 /* NRedAudio.cpp in Sources */,
 				1C748C2D1C21952C0024EED2 /* Plugin.cpp in Sources */,
 				CE405ED91E4A080700AA0B3D /* plugin_start.cpp in Sources */,
 			);

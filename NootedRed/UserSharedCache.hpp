@@ -6,6 +6,7 @@ namespace UserSharedCache
 {
 
     using Reader                   = int (*)(UInt64, void*, size_t);
+    using ContextReader            = int (*)(void*, UInt64, void*, size_t);
     constexpr UInt64   UserLimit   = 0x0000800000000000ULL;
     constexpr UInt32   MaxTextSize = 8 * 1024 * 1024;
     struct ImageReference
@@ -32,6 +33,29 @@ namespace UserSharedCache
         const ImageReference* imageRefs{nullptr};
         UInt32                imageCount{0};
         UInt64                imageAddresses[16]{};
+        void*                 readerContext{nullptr};
+        ContextReader         contextReader{nullptr};
+        // 由单次事务的堆工作区提供，不保存任何进程的匹配结果。
+        UInt8*                scanBuffer{nullptr};
+        static constexpr UInt32 ScanSize = 4096;
+        void selectImages(UInt64 base, const ImageReference* refs, UInt32 count)
+        {
+            bool reusable = tableRead && cache.address == base && refs && imageRefs && count <= 16 && imageCount <= 16;
+            for (UInt32 i = 0; reusable && i < count; ++i) {
+                if (!refs[i].path || refs[i].size == 0 || refs[i].size > 256) { reusable = false; break; }
+                bool found = false;
+                for (UInt32 j = 0; j < imageCount; ++j) {
+                    if (refs[i].size == imageRefs[j].size
+                        && memcmp(refs[i].path, imageRefs[j].path, refs[i].size) == 0) { found = true; break; }
+                }
+                reusable = found;
+            }
+            if (reusable) { return; }
+            imageRefs = refs;
+            imageCount = count;
+            tableRead = false;
+            memset(imageAddresses, 0, sizeof(imageAddresses));
+        }
         bool                  read(UInt64 address, void* value, UInt32 size)
         {
             if (failed || !cache.contains(address, size) || reads >= 32768 || size > 32 * 1024 * 1024 - bytes) {
@@ -40,7 +64,7 @@ namespace UserSharedCache
             }
             ++reads;
             bytes += size;
-            if (reader(address, value, size) != 0) {
+            if ((contextReader ? contextReader(readerContext, address, value, size) : reader(address, value, size)) != 0) {
                 failed = true;
                 return false;
             }
@@ -118,6 +142,7 @@ namespace UserSharedCache
         }
     };
 
+    __attribute__((noinline))
     inline bool imageForCache(Input& input, UInt64 base, Image& image, const char* pathName, UInt32 pathSize)
     {
         UInt8 header[456];
@@ -155,7 +180,7 @@ namespace UserSharedCache
         const auto slide = base - unslid;
         UInt64     imageAddress{0};
         UInt32     pathReadSize = pathSize;
-        if (input.imageCount > 16) { return false; }
+        if (input.imageCount > 16 || (input.imageCount && !input.imageRefs)) { return false; }
         for (UInt32 p = 0; p < input.imageCount; ++p) {
             if (!input.imageRefs[p].path || input.imageRefs[p].size > 256 || input.imageRefs[p].size == 0) {
                 return false;
@@ -163,6 +188,7 @@ namespace UserSharedCache
             if (pathReadSize < input.imageRefs[p].size) { pathReadSize = input.imageRefs[p].size; }
         }
         UInt8 entries[512];
+        Range pathWindow;
         for (UInt32 i = 0; !input.tableRead && i < imageCount;) {
             const auto count = imageCount - i < 16 ? imageCount - i : 16;
             if (!input.read(base + imagesOffset + static_cast<UInt64>(i) * 32, entries, count * 32)) { return false; }
@@ -171,7 +197,20 @@ namespace UserSharedCache
                 const auto  pathOffset = word(entry + 24);
                 if (!metadata.contains(base + pathOffset, pathReadSize)) { return false; }
                 char path[256];
-                if (!input.read(base + pathOffset, path, pathReadSize)) { return false; }
+                if (input.scanBuffer) {
+                    // 路径密集存放于只读元数据区；复用事务缓冲，避免每个目录项单独 copyin。
+                    const auto address = base + pathOffset;
+                    if (!pathWindow.contains(address, pathReadSize)) {
+                        const auto remaining = metadata.size - pathOffset;
+                        const auto length    = remaining < Input::ScanSize ? UInt32(remaining) : Input::ScanSize;
+                        if (!input.read(address, input.scanBuffer, length)) { return false; }
+                        pathWindow = {address, length};
+                    }
+                    memcpy(path, input.scanBuffer + (address - pathWindow.address), pathReadSize);
+                }
+                else if (!input.read(base + pathOffset, path, pathReadSize)) {
+                    return false;
+                }
                 for (UInt32 p = 0; p < input.imageCount; ++p) {
                     if (memcmp(path, input.imageRefs[p].path, input.imageRefs[p].size) != 0) { continue; }
                     const auto candidate = wide(entry);

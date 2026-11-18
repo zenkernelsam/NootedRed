@@ -2,7 +2,7 @@
 import re
 import struct
 import subprocess
-from metal_cache import CACHE, array, macho
+from metal_cache import array, macho
 
 
 class ResolverData:
@@ -10,7 +10,7 @@ class ResolverData:
         self.cache, self.work = cache, work
         self.catalog, self.images, self.functions = [], [], []
         path, ranges = None, []
-        for line in (CACHE / 'dyld_shared_cache_x86_64h.map').read_text().splitlines():
+        for line in (cache.directory / 'dyld_shared_cache_x86_64h.map').read_text().splitlines():
             if line.startswith('/'):
                 if path:
                     self.catalog.append((path, ranges))
@@ -139,6 +139,31 @@ class ResolverData:
                                self.references(patched, address, f'{i}-patched')))
         return i
 
+    def section_header(self):
+        from build_cache_section_targets import sections
+        targets = {}
+        for _, _, _, original_refs, patched_refs in self.functions:
+            for _, image, rva, _ in original_refs + patched_refs:
+                path, base = self.images[image]
+                matches = [entry for entry in sections(self.cache, base)
+                           if entry[2] <= base + rva and base + rva + 4 <= entry[2] + entry[3]]
+                if len(matches) != 1:
+                    raise ValueError('视频外部目标不属于唯一完整节')
+                segment, section, start, _, command, index = matches[0]
+                if segment == '__TEXT':
+                    continue
+                value = (segment, section, base + rva - start, command, index)
+                key = path, rva
+                if key in targets and targets[key] != value:
+                    raise ValueError('视频参考目标的节内身份冲突')
+                targets[key] = value
+        if not targets or len(targets) > 128:
+            raise ValueError('视频节目标数量超出预算')
+        out = 'inline constexpr UserCacheSectionData::Target SectionTargets[] = {\n'
+        for (path, rva), (segment, section, offset, command, index) in sorted(targets.items()):
+            out += f'    {{"{path}", 0x{rva:X}ULL, "{segment}", "{section}", 0x{offset:X}ULL, {command}, {index}}},\n'
+        return out + '};\n'
+
     def header(self, locations):
         out = 'inline constexpr UserCacheResolver::ImageReference ResolverImages[] = {\n'
         out += ''.join(f'    {{"{p}", sizeof("{p}")}},\n' for p, _ in self.images) + '};\n'
@@ -158,31 +183,3 @@ class ResolverData:
         if len(self.images) > 16 or len(self.functions) > 32:
             raise ValueError('映像或函数预算超限')
         return out
-
-
-def containing_function(cache, image, address):
-    # 内部函数采用 LC_FUNCTION_STARTS，而非剥离符号之间的大区间。
-    segments, _, _ = macho(cache.read, image)
-    link = next(s for s in segments if s[0] == '__LINKEDIT')
-    commands = cache.read(image + 32, struct.unpack_from('<I', cache.read(image, 32), 20)[0])
-    cursor, starts = 0, []
-    while cursor < len(commands):
-        kind, length = struct.unpack_from('<II', commands, cursor)
-        if kind == 0x26:
-            offset, size = struct.unpack_from('<II', commands, cursor + 8)
-            data = cache.read(link[1] + offset - link[3], size)
-            value, shift, current = 0, 0, image
-            for byte in data:
-                value |= (byte & 127) << shift
-                if byte & 128:
-                    shift += 7
-                    continue
-                if not value:
-                    break
-                current += value
-                starts.append(current)
-                value = shift = 0
-        cursor += length
-    start = max(a for a in starts if a <= address)
-    end = min(a for a in starts if a > start)
-    return start, cache.read(start, end - start)

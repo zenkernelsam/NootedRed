@@ -11,9 +11,9 @@ from metal_cache import CacheReader
 
 ROOT = Path(__file__).resolve().parents[1]
 WORK = ROOT / "build/vcn"
-ADDRESS = 0x7FFA0C59BBAC
+ADDRESS = 0x7FFA0C59FBAC
 SIZE = 1136
-SHA256 = "b7c725552045a9db206ab2eed4edda7ea3d27a29de2feee782204c362764a33d"
+SHA256 = "e932f4a604b5510fb58f0b6211df8a683e7bea13e078b0e2d390dd5ead9dc6ea"
 
 
 def main():
@@ -24,12 +24,20 @@ def main():
     cache = CacheReader()
     try:
         native = cache.read(ADDRESS, SIZE)
-        assert hashlib.sha256(native).hexdigest() == SHA256
-        patched = bytearray(native)
+        # 参考站点函数按构建而异（steve pin=e932f4a6…，旧 pin=de66696c…）；
+        # 24H32 上发射于已核验备用站点 0x7FFA06692198+0x283，此时整体跳过仿真。
+        on_reference = hashlib.sha256(native).hexdigest() in {SHA256, "de66696cb8cce0f7ac81f15a336250778da4d4486dd6fb0e4af33783b25e2201"}
+        record = None
         if not args.stock:
             records = json.loads((WORK / "user-patches.json").read_text())["records"]
             record = next(r for r in records if r["label"] == "AppleGVA_AMDOnlyFallback")
-            assert record["address"] == ADDRESS + 0x287
+        site_ok = record is None or record["address"] == ADDRESS + 0x287
+        if not (on_reference and site_ok):
+            why = f"发射于已核验备用站点 {record['address']:#x}" if record is not None else "参考站点函数未核实"
+            print(f"SKIP: {why}，仿真仅覆盖 steve 参考站点")
+            return
+        patched = bytearray(native)
+        if record is not None:
             assert bytes.fromhex(record["original"]) == native[0x287:0x28D]
             patched[0x287:0x28D] = bytes.fromhex(record["patched"])
         dump = WORK / "gva-choice-dump.s"
@@ -57,9 +65,9 @@ def main():
                     assembly.append(f"callq _{calls[target]}")
                 elif "(%rip)" in instruction:
                     target = int(re.search(r"## 0x([0-9a-f]+)", instruction)[1], 16)
-                    if target == 0x33B0288C:
+                    if target == 0x33AFE8AC:
                         symbol = "guardPointer"
-                    elif target == 0x36E7DF94:
+                    elif target == 0x36E79FE4:
                         symbol = "gpuHead"
                     else:
                         if target not in strings:

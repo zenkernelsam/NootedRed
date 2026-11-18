@@ -1,19 +1,29 @@
-# Tahoe 用户态动态缓存匹配
+# Sonoma / Sequoia / Tahoe 用户态动态缓存匹配
 
-`-NRedComputeScratch` 与 `-NRedVCN` 仍显式启用，系统入口复用作者的
-`KernelVersion::majorMatches(MACOS_26)`，限 Tahoe / Darwin 25.x。设备范围保持不变：
+macOS 14/15/26 使用各自已核实的完整函数数据，复用公共动态解析器、VPF 计划和页面事务，范围与参数见 [多系统适配](macos-multi-os-compat.md)。
+
+显示组使用 `-NRedDisplayFix`，视频组使用 `-NRedVideoFix`；
+旧分项参数不再读取，完整组合见 [启动参数](boot-arguments.md)。本文中的动态解析适用于 Darwin 23/24/25。
+设备范围保持不变：
 ComputeScratch 为 NRed 原生支持的六种 Vega APU；视频为四种 VCN 2.2 APU。
 
 公共组件按职责分两层：`UserSharedCache.hpp` 负责有读取预算的缓存元数据、映像与 Mach-O 解析；
 `UserCacheResolver.hpp` 负责完整字节核验、唯一候选扫描、相对引用和绑定核验、载荷重建。
-ImmediateSync、SrdShared、LegacyBlend、ComputeScratch 和视频补丁都复用这些基础能力。
+SrdShared、LegacyBlend、ComputeScratch 和视频补丁都复用这些基础能力；当前显示组合保留原生同步，
+不再清除延迟同步位。历史 ImmediateSync 载荷仅保留作回归和旧状态拒绝依据。
 `UserSurfaceSyncResolver.hpp` 保留渲染策略关系及 Metal 专属目标核验，
 `UserVideoDecodeResolver.hpp` 保留视频计划；公共层不依赖任一生成数据头。
 `tools/cache_resolver_data.py` 共用生成完整函数、指令／数据分界及引用描述的逻辑。
 
-参考 UUID `31374756-89B4-34E8-A34F-56C5D57216A1` 使用生成数据的静态快路径。
-其他 UUID 通过当前进程中的 dyld header、image table 与 Mach-O 解析定位映像，
-再匹配补丁所在的完整原生函数或本机设备已应用的完整载荷。UUID 不作为动态路径的兼容证明。
+OpenGL 的独立驱动修复见 [OpenGL 修复](opengl-display-fix.md)。它复用公共相对位移工具及引用数据，
+只匹配当前校验页内的完整修复块，不执行文件准备或 Mach-O 扫描；跨页块和页内歧义均拒绝。
+
+三个系统的所有 UUID 均通过当前进程中的 dyld header、image table 与 Mach-O 解析定位映像，
+再匹配补丁所在的完整原生函数或本机设备已应用的完整载荷。参考 UUID 也不能跳过解析；
+生成数据中的函数 RVA 仅供匹配和重定位参考，提交守卫必须接收解析器核验的实际方法位置。
+FVRC 可复用已核验的位置，但仍检查映像身份、映射属性、完整函数和引用目标。
+Tahoe 的 COW 映射判定、`HintOnly` 不得禁用可复用条目，以及跳过非 GPU 系统命令的进程过滤，见
+[进程过滤与 FVRC 复用](process-filter-fvrc.md)。
 解析器仅读取并生成计划；桥接完成所有字节与 RX 权限检查后才写入私有 COW 页。
 
 动态路径重新计算 rel32 调用与 RIP 位移。已完整核验的目标函数允许搬迁；
@@ -21,7 +31,10 @@ ImmediateSync、SrdShared、LegacyBlend、ComputeScratch 和视频补丁都复�
 核对目标映像与 RVA，保留同一绑定的不同引用位置，不能把所有引用改到第一个 GOT 槽。
 这支持相同实现的缓存重排，不能自动适配任意新函数实现、外部符号 RVA 或驱动 ABI。
 
-ComputeScratch 同时核验已撤回 VT 跳转所在的完整原生函数，未知缓存不使用固定 VT 偏移。
+Tahoe ComputeScratch 核验原生配置函数、完整 pipeline 构造函数和 452 字节 Scratch 函数，
+Scratch 只按该函数自身的完整字节与相对引用判定兼容，不按 UUID 切换固定偏移路径。
+Sonoma 和 Sequoia 核验各自原生配置函数、完整 pipeline 构造函数和 456 字节 Scratch 函数。
+SubmitGuard 独立匹配完整提交方法，核对相对引用；重复安装还核对整个已安装守卫及返回地址。
 生成器以 `LC_FUNCTION_STARTS` 确定该内部函数边界，使用 `LC_DATA_IN_CODE` 区分跳转表与指令。
 参考文件中的链式指针按 [Apple dyld 缓存格式](https://github.com/apple-oss-distributions/dyld/blob/main/include/mach-o/dyld_cache_format.h)
 的 `slide_info2` 解析；运行时核验的是当前进程里已经重定位的指针。
@@ -35,8 +48,14 @@ ComputeScratch 同时核验已撤回 VT 跳转所在的完整原生函数，未�
 为实际 UUID 的四个原始 32 位字，不是兼容性白名单。
 相应 `DynamicMatched`、`DynamicApplied`、`DynamicRejected`、`DynamicReads`
 记录动态核验、完成写入并恢复 RX、拒绝和读取次数。
-渲染诊断 `NRedImmediateSyncRevision=4` 用于区分含动态 Scratch 的版本。
+渲染诊断 `NRedImmediateSyncRevision=4` 是历史事务版本名称；当前修复组合由
+`NRedDisplayFixVersion=3`、`NRedImmediateSyncDisabled=1` 标识。
 
 离线回归包括六种 Scratch 设备、四种视频设备、重排映像／函数／GOT、跨页部分写入、
-权限失败、幂等与撤回策略拒绝，并提供 ASan/UBSan。只读参考缓存回归还核对动态计划
-与静态数据逐项一致。不同 Tahoe 缓存的实机启动、画面与持续视频播放仍需测试人员验收。
+权限失败与幂等，并提供 ASan/UBSan。只读参考缓存回归还核对动态计划
+与静态数据逐项一致。不同 Sonoma / Sequoia / Tahoe 缓存的实机启动、画面与持续视频播放仍需测试人员验收。
+
+`test_compute_cache_dynamic.py` 和 `test_video_cache_dynamic.py`
+默认分别运行未知 UUID 和参考 UUID，在保留参考 UUID 时仍重排映像、函数与引用目标。
+`--known-uuid` 仅运行参考 UUID 用例，两项均接受 `--sequoia` 或 `--sonoma`。
+两类 UUID 执行相同的写入、幂等、拒绝和回滚断言。

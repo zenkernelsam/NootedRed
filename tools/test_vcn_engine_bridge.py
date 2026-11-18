@@ -17,8 +17,9 @@ def main():
     stubs.mkdir(parents=True, exist_ok=True)
     (stubs / 'IOTypes.h').write_text('#pragma once\n#include <cstdint>\nusing UInt8=uint8_t;using UInt32=uint32_t;using UInt64=uint64_t;\n')
     vcn = (ROOT / 'NootedRed/VCN.cpp').read_text()
+    assert 'checkKernelArgument("-NRedVideoFix")' in vcn
     functions = '\n'.join(function(vcn, prefix) for prefix in [
-        'bool supported()', 'bool VCN::ready()', 'bool VCN::diagnosticOnly()', 'bool VCN::activate()',
+        'bool supported()', 'bool VCN::ready()',
         'bool  VCN::allocated()', 'void* VCN::allocateEngine()',
         'OSMetaClassBase* safeCast(', 'void* createSML(', 'void signalWork('])
     allocation = function((ROOT / 'NootedRed/X5000.cpp').read_text(), 'bool X5000::allocateHWEngines(')
@@ -44,11 +45,12 @@ struct NRed {
 };
 unsigned kernelMajor=25,kernelMinor=6;
 const PenguinWizardry::KernelVersion& currentKernelVersion(){static std::optional<PenguinWizardry::KernelVersion> current;return current.emplace(kernelMajor,kernelMinor);}
-bool requested=true,darwin24=false,diagnosticBridge=false,loadCompleted=true,has5000=true,has6000=true,hooks=true,engineAllocated=false;
+bool requested=true,loadCompleted=true,has5000=true,has6000=true,hooks=true,engineAllocated=false;
+struct OSObjectLike {void release(){}};
 struct OSMetaClass {
     unsigned size=64;void* object=nullptr;
     unsigned getClassSize()const{return size;}
-    void* alloc(){return object;}
+    OSObjectLike* alloc(){return static_cast<OSObjectLike*>(object);}
 };
 struct OSMetaClassBase {const OSMetaClass* meta;const OSMetaClass* getMetaClass(){return meta;}};
 struct Pair {const OSMetaClass* oldClass;const OSMetaClass* newClass;};
@@ -56,7 +58,7 @@ Pair pairs[4]{};
 OSMetaClass engine;OSMetaClass* engineClass=&engine;
 mach_vm_address_t safeCastOriginal=0,sml5000=0,sml6000=0,signalOriginal=0;
 void (*notifyAccess)(void*)=nullptr;
-namespace VCN {bool ready();bool diagnosticOnly();bool activate();bool allocated();void* allocateEngine();}
+namespace VCN {bool ready();bool allocated();void* allocateEngine();}
 template<typename T>T& getMember(void* object,unsigned offset){return *reinterpret_cast<T*>(static_cast<uint8_t*>(object)+offset);}
 template<typename T>struct Field {unsigned offset;Field operator+(unsigned delta)const{return {offset+delta};}T& operator()(void* object){return getMember<T>(object,offset);}};
 struct X5000 {
@@ -81,7 +83,7 @@ int main(){
     unsigned engineObject=1,pm4Object=2,sdmaObject=3;
     auto& x=X5000::singleton();x.pm4.object=&pm4Object;x.sdma.object=&sdmaObject;
     for(unsigned minor:{0U,1U,6U,7U,99U})for(unsigned id:{0x15E7U,0x1636U,0x1638U,0x164CU}){
-        kernelMajor=25; kernelMinor=minor;darwin24=false;diagnosticBridge=false;
+        kernelMajor=25; kernelMinor=minor;
         NRed::singleton().device=id;requested=loadCompleted=has5000=has6000=hooks=true;
         engineAllocated=false;engine.object=&engineObject;
         alignas(8) std::array<uint8_t,0x408> object{};
@@ -118,36 +120,28 @@ int main(){
         NRed::singleton().device=id;loadCompleted=has5000=has6000=hooks=true;
         assert(!VCN::ready()&&VCN::allocateEngine()==nullptr);
     }
-    // Darwin 24 is opt-in and diagnostic-only: the bridge may be ready, but it must not
-    // allocate an engine, advertise VCN0, switch SML or substitute accelerator classes.
-    NRed::singleton().device=0x1638; requested=true; darwin24=true; diagnosticBridge=true;
+    // Darwin 24 is a real bridge under the upstream profile model: for 0x15E7 it
+    // must allocate the engine, advertise VCN0 and select the generic SML.
+    NRed::singleton().device=0x15E7; requested=true;
     kernelMajor=24; kernelMinor=6; loadCompleted=has5000=has6000=hooks=true; engineAllocated=false;
-    assert(VCN::ready()&&VCN::diagnosticOnly()&&!VCN::activate()&&!VCN::allocated());
-    assert(VCN::allocateEngine()==nullptr);
-    assert(NRed::singleton().properties.at("NRedVCNEngineSkippedDiagnostic")==1);
-    alignas(8) std::array<uint8_t,0x408> isolated{};
-    x.hasVCN0Field(isolated.data())=true;
-    assert(x.allocateHWEngines(isolated.data()));
-    assert(getMember<void*>(isolated.data(),0x3F8)==nullptr);
-    x.hasVCN0Field(isolated.data())=VCN::activate();
-    assert(!x.hasVCN0Field(isolated.data())&&!VCN::allocated());
-    engineAllocated=true;assert(!VCN::allocated());engineAllocated=false;
-    notified=nativeSignals=0;
-    createSML(0x10000);assert(selected==5000&&configuration==0x10000);
-    signalWork(isolated.data());assert(notified==0&&nativeSignals==1);
-    {
-        OSMetaClass oldClass,newClass;oldClass.size=64;newClass.size=80;
-        pairs[0]={&oldClass,&newClass};OSMetaClassBase oldObject{&oldClass},newObject{&newClass};
-        assert(safeCast(&newObject,&oldClass)==nullptr);
-        assert(safeCast(&oldObject,&newClass)==nullptr);
-    }
-    kernelMinor=5; assert(!VCN::ready());
-    kernelMinor=6; darwin24=false; diagnosticBridge=false; assert(!VCN::ready());
+    engine.object=&engineObject;
+    assert(VCN::ready()&&!VCN::allocated());
+    assert(VCN::allocateEngine()==&engineObject&&VCN::allocated());
+    alignas(8) std::array<uint8_t,0x408> enabled{};
+    x.hasVCN0Field(enabled.data())=VCN::ready();
+    assert(x.allocateHWEngines(enabled.data()));
+    assert(x.hasVCN0Field(enabled.data()));
+    assert(getMember<void*>(enabled.data(),0x3F8)==&engineObject);
+    createSML(0x10001);assert(selected==6000&&configuration==0x10001);
+    notified=nativeSignals=0;signalWork(enabled.data());assert(notified==1&&nativeSignals==0);
+    engineAllocated=false;
+    kernelMinor=5; assert(VCN::ready());
+    kernelMajor=22; assert(!VCN::ready());
     NRed::singleton().device=0x1638;
     for(bool* state:{&requested,&loadCompleted,&has5000,&has6000,&hooks}){
         *state=false;assert(!VCN::ready());*state=true;
     }
-    puts("PASS: four VCN2 engine slots, allocation failure, SML/cast/GFX gates and Darwin 24 diagnostic isolation");
+    puts("PASS: VCN2 engine slots, failure handling, GFX/SML/cast gates, and Darwin 24 real-bridge mode");
 }
 '''.replace('FUNCTIONS', functions).replace('ALLOCATION', allocation)
     util = WORK / "stubs/Headers"

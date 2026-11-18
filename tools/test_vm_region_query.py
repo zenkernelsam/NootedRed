@@ -1,5 +1,6 @@
 """使用真实 Mach API 验证两处权限查询；仅检查内存映射，不提交 GPU 工作。"""
 from pathlib import Path
+from user_patch_memory_harness import with_memory_helpers
 import subprocess
 
 from test_vcn_native_load import function
@@ -10,11 +11,15 @@ WORK = ROOT / "build/vm-region-query"
 
 def main():
     WORK.mkdir(parents=True, exist_ok=True)
-    helpers = []
-    for module in ["UserSurfaceSync", "UserVideoDecode"]:
-        source = (ROOT / f"NootedRed/{module}.cpp").read_text()
-        body = function(source, "bool leafProtection(")
-        helpers.append(body.replace("leafProtection", module + "Protection"))
+    surface = (ROOT / "NootedRed/UserSurfaceSync.cpp").read_text()
+    video = (ROOT / "NootedRed/UserVideoDecode.cpp").read_text()
+    assert "UserPatchMemory::leafProtection" in video
+    helpers = [function(surface, "bool leafProtection(").replace("leafProtection", "UserSurfaceSyncProtection", 1)]
+    helpers.append(
+        "static bool UserVideoDecodeProtection(vm_map_t map, mach_vm_address_t page, vm_prot_t& protection) {\n"
+        "    return UserPatchMemory::leafProtection(map, page, protection, queryRegion, error);\n"
+        "}"
+    )
     harness = r'''
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
@@ -24,7 +29,10 @@ def main():
 #include <cstdio>
 #include <cstdint>
 #include <initializer_list>
+using UInt8 = uint8_t;
+using UInt16 = uint16_t;
 using UInt32 = uint32_t;
+using UInt64 = uint64_t;
 static kern_return_t lastError = 0;
 static unsigned calls = 0;
 static void error(kern_return_t value) { lastError = value; }
@@ -81,7 +89,7 @@ int main() {
     assert(calls);
     puts("PASS: real short/full protection parity; shared cache, RW/R/NONE and unmapped addresses");
 }
-'''.replace("HELPERS", "\n".join(helpers))
+'''.replace("HELPERS", with_memory_helpers("\n".join(helpers)))
     cpp = WORK / "test-query.cpp"
     executable = WORK / "test-query"
     cpp.write_text(harness)

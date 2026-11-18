@@ -1,5 +1,7 @@
 """只读参考缓存，验证完整扫描预算和真实合并 GOT 的解码，不修改系统文件。"""
 from pathlib import Path
+import argparse
+import json
 import struct
 import subprocess
 from metal_cache import CacheReader
@@ -9,8 +11,19 @@ WORK = ROOT / 'build/dynamic-cache/reference'
 
 
 def main():
+    global WORK
+    parser = argparse.ArgumentParser(description=__doc__)
+    cache_args = parser.add_mutually_exclusive_group()
+    cache_args.add_argument('--sequoia-cache', type=Path)
+    cache_args.add_argument('--sonoma-cache', type=Path)
+    args = parser.parse_args()
+    directory = args.sonoma_cache or args.sequoia_cache
+    system = 'sonoma' if args.sonoma_cache else 'sequoia'
+    if directory:
+        WORK = ROOT / f'build/dynamic-cache/{system}-reference'
     WORK.mkdir(parents=True, exist_ok=True)
-    cache = CacheReader()
+    profile = json.loads((ROOT / f'tools/fixtures/{system}-compat.json').read_text()) if directory else None
+    cache = CacheReader(directory, profile['uuid']) if profile else CacheReader()
     mappings = []
     try:
         for start, end, offset, handle in cache.mappings:
@@ -76,6 +89,24 @@ int main(){
  for(auto& m:mappings)if(m.fd>=0)close(m.fd);
 }
 '''.replace('MAPPINGS', ',\n'.join(mappings))
+    if profile:
+        harness = harness.replace('UserVideoDecodeData::', 'UserSequoiaVideoData::')
+        harness = harness.replace('device.patches,plan)', f'device.patches,plan,{23 if args.sonoma_cache else 24})')
+        harness = harness.replace('UserSurfaceSyncData::DevicePatches', 'UserSequoiaSurfaceData::DevicePatches')
+        harness = harness.replace('UserSurfaceSyncResolver::resolve(reader,UserSurfaceSyncData::CacheBase,device,true,true,plan,true)',
+                                  'UserSurfaceSyncResolver::resolveSequoia(reader,UserSurfaceSyncData::CacheBase,device.deviceID,plan)')
+        harness = harness.replace('device.scratch', 'device.patches')
+        harness = harness.replace(' for(auto& m:mappings)if(m.fd>=0)',
+            f' uint64_t offset=0;assert(UserSurfaceSyncResolver::resolveSequoiaSubmit(reader,UserSurfaceSyncData::CacheBase,offset));'
+            f'assert(offset=={profile["metal"]["-[GFX9AMD_MtlCmdQueue submitCommandBuffers:count:]"]["address"] - 0x7ff800000000}ULL);'
+            '\n for(auto& m:mappings)if(m.fd>=0)')
+    if args.sonoma_cache:
+        harness = harness.replace('UserSequoiaVideoData::', 'UserSonomaVideoData::')
+        harness = harness.replace('UserSequoiaSurfaceData::', 'UserSonomaSurfaceData::')
+        harness = harness.replace('UserSurfaceSyncResolver::resolveSequoia(reader,UserSurfaceSyncData::CacheBase,device.deviceID,plan)',
+            '([&]{plan.input={reader,{}};plan.input.scanBuffer=plan.scan;return UserSurfaceSyncResolver::resolveMetal(plan.input,UserSurfaceSyncData::CacheBase,device.deviceID,plan,23);}())')
+        harness = harness.replace('UserSurfaceSyncResolver::resolveSequoiaSubmit(reader,UserSurfaceSyncData::CacheBase,offset)',
+            '([&]{UserSharedCache::Input in{reader,{}};return UserSurfaceSyncResolver::resolveSubmitForOS(in,UserSurfaceSyncData::CacheBase,offset,23);}())')
     source, exe = WORK/'test.cpp', WORK/'test'
     source.write_text(harness)
     subprocess.run(['clang++','-std=c++23','-O2','-I'+str(WORK/'stubs'),'-I'+str(ROOT/'NootedRed'),

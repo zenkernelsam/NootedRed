@@ -39,12 +39,17 @@
 #include <IOKit/IOLib.h>
 #include <IOKit/IOTypes.h>
 #include <IOKit/pci/IOPCIDevice.h>
+#include <KernelDisplayEvidence.hpp>
 #include <Kexts.hpp>
 #include <NRed.hpp>
 #include <PenguinWizardry/RuntimeMC.hpp>
 #include <Regs/GC.hpp>
 #include <Regs/NBIO.hpp>
 #include <Regs/SMU.hpp>
+#include <UserMtlDualQuad.hpp>
+#include <UserOpenGL.hpp>
+#include <UserPatchCoordinator.hpp>
+#include <UserProcessFilter.hpp>
 #include <UserSurfaceSync.hpp>
 #include <UserVideoDecode.hpp>
 #include <VCN.hpp>
@@ -69,6 +74,7 @@ void NRed::init()
 
     Backlight::singleton().init();
     VCN::init();
+    UserOpenGL::registerKext();
 
     lilu.onKextLoadForce(&kextRadeonX6000Framebuffer);
     lilu.onKextLoadForce(&kextRadeonX5000HWLibs);
@@ -80,8 +86,14 @@ void NRed::init()
         [](void* const, KernelPatcher& patcher)
         {
             singleton().processPatcher();
+            UserPatchCoordinator::configureDisplay(checkKernelArgument("-NRedDisplayFix"),
+                                                   currentKernelVersion().major());
+            UserProcessFilter::init(patcher);
             UserSurfaceSync::init(patcher);
+            UserOpenGL::init(patcher);
             UserVideoDecode::init(patcher);
+            UserPatchCoordinator::init(patcher);
+            UserMtlDualQuad::init(patcher);
             DriverInjector::singleton().processPatcher(patcher);
             PenguinWizardry::RuntimeMCManager::singleton().processPatcher(patcher);
         },
@@ -91,6 +103,7 @@ void NRed::init()
         nullptr, 0,
         [](void* const, KernelPatcher& patcher, const size_t id, const mach_vm_address_t slide, const size_t size)
         {
+            UserOpenGL::processKext(patcher, id, slide, size);
             AGDP::singleton().processKext(patcher, id, slide, size);
             Backlight::singleton().processKext(patcher, id, slide, size);
             DebugEnabler::singleton().processKext(patcher, id, slide, size);
@@ -141,6 +154,13 @@ void NRed::hwLateInit()
             this->enumRevision = 0x1;
         }
     }
+
+    const UInt8 attributesBits = (this->attributes.isPicasso() ? 1U : 0U) | (this->attributes.isRaven2() ? 2U : 0U)
+                                 | (this->attributes.isRenoir() ? 4U : 0U) | (this->attributes.isRenoirE() ? 8U : 0U)
+                                 | (this->attributes.isGreenSardine() ? 16U : 0U);
+    KernelDisplayEvidence::recordGFX9(this->deviceID, this->pciRevision, this->devRevision, this->enumRevision,
+                                      attributesBits, this->fbOffset);
+    KernelDisplayEvidence::publish();
 
     DBGLOG("NRed", "deviceID = 0x%X", this->deviceID);
     DBGLOG("NRed", "pciRevision = 0x%X", this->pciRevision);
@@ -209,13 +229,31 @@ void NRed::processPatcher()
     DeviceInfo::deleter(devInfo);
 }
 
-void NRed::setProp32(const char* const key, const UInt32 value) const { this->iGPU->setProperty(key, value, 32); }
+void NRed::setProp32(const char* const key, const UInt32 value) const
+{
+    if (this->iGPU == nullptr) { return; }
+
+    this->iGPU->setProperty(key, value, 32);
+}
 
 UInt32 NRed::readReg32(const UInt32 reg) const
 {
+    if (!this->isMmioReady()) { return 0xFFFFFFFFu; }
+
     if ((reg * sizeof(UInt32)) < this->rmmio->getLength()) { return this->rmmioPtr[reg]; }
     else {
         this->rmmioPtr[PCIE_INDEX2] = reg;
         return this->rmmioPtr[PCIE_DATA2];
+    }
+}
+
+void NRed::writeReg32(const UInt32 reg, const UInt32 value) const
+{
+    if (!this->isMmioReady()) { return; }
+
+    if ((reg * sizeof(UInt32)) < this->rmmio->getLength()) { this->rmmioPtr[reg] = value; }
+    else {
+        this->rmmioPtr[PCIE_INDEX2] = reg;
+        this->rmmioPtr[PCIE_DATA2]  = value;
     }
 }

@@ -1,4 +1,5 @@
 """生成指定缓存的 VCN2 核显视频补丁；包含设备识别与已验证的编码协议修正。"""
+import argparse
 import hashlib
 import json
 from pathlib import Path
@@ -7,46 +8,43 @@ import struct
 import subprocess
 
 from audit_video_driver import symbols
-from metal_cache import CACHE, CacheReader, array, macho
+from metal_cache import CacheReader, array, macho
 from vcn_capabilities import devices
 from cache_resolver_data import ResolverData
 
 ROOT = Path(__file__).resolve().parents[1]
 WORK = ROOT / "build/vcn"
-GVA_CHOICE_ADDRESS = 0x7FFA06692198
-GVA_CHOICE_SIZE = 1704
-GVA_CHOICE_SHA256 = "1836eb3109e90afac34824654063b2cab953dbb55903cb94f222850a1fa67523"
+GVA_CHOICE_ADDRESS = 0x7FFA0C59FBAC
+GVA_CHOICE_SIZE = 1136
+GVA_CHOICE_SHA256 = {"b7c725552045a9db206ab2eed4edda7ea3d27a29de2feee782204c362764a33d", "de66696cb8cce0f7ac81f15a336250778da4d4486dd6fb0e4af33783b25e2201", "e932f4a604b5510fb58f0b6211df8a683e7bea13e078b0e2d390dd5ead9dc6ea"}
 HASHES = {
-    "__ZN17VAAcceleratorInfo8identifyEjj": "dd95fd9d1ea9740465bcefa6d68770a0ebbb6e8161e97939be19ff1c1671737e",
-    "__ZN18VAAddrLibInterface4initEP11VAIOConnectP13sHardwareInfo":
-        "abafc0170bb2bfa7c333371531e68cc01c237d6ddf4f297711f71c6f0773a264",
-    "__ZN4Addr2V27Gfx9Lib20HwlConvertChipFamilyEjj":
-        "4a4a1d2337e580de8dcd851ec686179bc375639441ebf7020dcca69ea780f8fa",
-    "__ZN4Addr3Lib6CreateEPK18_ADDR_CREATE_INPUTP19_ADDR_CREATE_OUTPUT":
-        "b0a123ffae9ff1b251077346fe12ba2640c007bdbb12ec15716855c5bf160063",
-    "__ZN9VAFactory20createGraphicsEngineEP9VAContext":
-        "65ac04e1da1d0c5445de83db24583ffbfb29f2851928dc44cddb885c0d7846fc",
-    "__ZN9VAFactory14createImageBltEP9VAContextj":
-        "7052a8a0a8a73e5aac554bfd00a395e48a30af2de23587f0986710bd034cd2a2",
-    "__ZN9VAFactory17createDeblockerVPEi": "58fcd2efbaca0055df4e6dbb2bd54da7d6fc07e9beebbd216cb047eeb9c2271e",
-    "__ZN9VAFactory17createDitheringVPEi": "7bbd8395c27103ac3c5a7188fa79ef50b03c95cacf3dc6d5edee6fa8a7b9e72b",
-    "__ZN9VAFactory20createDeinterlacerVPEi": "3eeaf7d7db19379578209f019145ef116dc1526ee091b3e42e43255a07ac89ad",
-    "__ZN9VAFactory29createColourFormatConverterVPEi":
-        "8ed81834c8e63adc03f7714b2cf866a15db0d4ee444e6d8be66363cbb17369cd",
-    "__ZN9VAFactory31createDynamicContrastEnhancerVPEi":
-        "d9e9dc85b70ed7c1f9fa236ba967bfe7f5fee5aee3d3f9fb88a1b44b85fd184b",
-    "__ZN14Vcn2EncCommand15getFeedbackSizeEv":
-        "571d3ec0d74000c103203b60450b43b67d758b74b470d0082d45879723021c7a",
-    "__ZN26AVDVcn2AvcEncDataProcessor19ProcessEncodeStatusEP19_VAEncodeStatusInfoPvP15VAVendorTexture":
-        "fe78c5a8d4508c9a0eab2ba96830634b5f8f8a7982b06cd91c2bc1f6a1e2f493",
-    "__ZN27AVDVcn2HevcEncDataProcessor19ProcessEncodeStatusEP19_VAEncodeStatusInfoPvP15VAVendorTexture":
-        "0ff1d68ec316f8497278a3be223c2eabe642f68e894fa7ecc808e70168c5b2c2",
-    "__ZN11Vcn2Encoder15setEncodeParamsEPvP15VAVendorTexture":
-        "c8193ea2d2c7193012a5618b6918d41fffe30ad0c1389256fee983e66ac24347",
+    "__ZN11VACPFactory8createCPEP11_VAHWConfigP11VAIOConnectPP4VACp": {'e63a2259ad470bd088d623edc778be34f9f6630fc6156bf6cac808c381b15aa6', '4d6e96cf8b2b6ad3fb7aaa17b0b5a93c7649fed9308912caeaf851dbf3c19b84'},
+    "__ZN17VAAcceleratorInfo8identifyEjj": {'d7c579bce55c5724ec241f7f9abece9d0f23b1c30178d2f539fc0cabf41dc0bd', 'dd95fd9d1ea9740465bcefa6d68770a0ebbb6e8161e97939be19ff1c1671737e', '75d8727f3aaa4c61b001794812a84090a7e847c4f9cad3a4bd0318ede6a1bdee'},
+    "__ZN18VAAddrLibInterface4initEP11VAIOConnectP13sHardwareInfo": {'b35bd96d6ca0b8bd9047af67fc3f0f77ef09242f684c65e17d4cee062af155ea', 'abafc0170bb2bfa7c333371531e68cc01c237d6ddf4f297711f71c6f0773a264'},
+    "__ZN4Addr2V27Gfx9Lib20HwlConvertChipFamilyEjj": {'4a4a1d2337e580de8dcd851ec686179bc375639441ebf7020dcca69ea780f8fa', '4a4a1d2337e580de8dcd851ec686179bc375639441ebf7020dcca69ea780f8fa'},
+    "__ZN4Addr3Lib6CreateEPK18_ADDR_CREATE_INPUTP19_ADDR_CREATE_OUTPUT": {'b52b9103faa80681fff4d65758ac961b9a3263add45c7597ea7074e61e4fb685', 'b0a123ffae9ff1b251077346fe12ba2640c007bdbb12ec15716855c5bf160063'},
+    "__ZN9VAFactory20createGraphicsEngineEP9VAContext": {'0cca569382df5a722cd0a569536315566bc0351207ae7fe0cb1ae4cca67a1327', '65ac04e1da1d0c5445de83db24583ffbfb29f2851928dc44cddb885c0d7846fc'},
+    "__ZN9VAFactory14createImageBltEP9VAContextj": {'c5261154448c0030e75bf1e0f83a5152cb060d05857e317591b2a99ec18ab928', '7052a8a0a8a73e5aac554bfd00a395e48a30af2de23587f0986710bd034cd2a2'},
+    "__ZN9VAFactory17createDeblockerVPEi": {'c1ff92f8d8465dfbf165087549acb38a393c633ae8766bb668f93a36e9cf5f14', '58fcd2efbaca0055df4e6dbb2bd54da7d6fc07e9beebbd216cb047eeb9c2271e'},
+    "__ZN9VAFactory17createDitheringVPEi": {'9655251548842be724c1dcd05f22d7dcf114a8923350fd69cef9ac3e7ec35a76', '7bbd8395c27103ac3c5a7188fa79ef50b03c95cacf3dc6d5edee6fa8a7b9e72b'},
+    "__ZN9VAFactory20createDeinterlacerVPEi": {'eb331d24e2a37de70736a36082d565cf2a39b31e57eedb8e9faa47172598ab8d', '3eeaf7d7db19379578209f019145ef116dc1526ee091b3e42e43255a07ac89ad'},
+    "__ZN9VAFactory29createColourFormatConverterVPEi": {'5eb36cfc6c78526c1a3d4613cf55cb8d0f4c3a5967ecac16755b11d5ecdbac71', '8ed81834c8e63adc03f7714b2cf866a15db0d4ee444e6d8be66363cbb17369cd'},
+    "__ZN9VAFactory31createDynamicContrastEnhancerVPEi": {'32d515a6ca3132d7fa258389d7bb109a3541508ee4814949e73fdd728f253dcd', 'd9e9dc85b70ed7c1f9fa236ba967bfe7f5fee5aee3d3f9fb88a1b44b85fd184b'},
+    "__ZN14Vcn2EncCommand15getFeedbackSizeEv": {'571d3ec0d74000c103203b60450b43b67d758b74b470d0082d45879723021c7a', '571d3ec0d74000c103203b60450b43b67d758b74b470d0082d45879723021c7a'},
+    "__ZN26AVDVcn2AvcEncDataProcessor19ProcessEncodeStatusEP19_VAEncodeStatusInfoPvP15VAVendorTexture": {'d51bd9c906e803b9fc9b1b247a79f30059ebec4cfcb92f4492dfc1ed6fa21230', 'fe78c5a8d4508c9a0eab2ba96830634b5f8f8a7982b06cd91c2bc1f6a1e2f493'},
+    "__ZN27AVDVcn2HevcEncDataProcessor19ProcessEncodeStatusEP19_VAEncodeStatusInfoPvP15VAVendorTexture": {'1c3726a90b3e8f1d320700b05d3bf6cf9c7f49bd4afae0a2aac1cb44aaaaf038', '0ff1d68ec316f8497278a3be223c2eabe642f68e894fa7ecc808e70168c5b2c2'},
+    "__ZN11Vcn2Encoder15setEncodeParamsEPvP15VAVendorTexture": {'c8193ea2d2c7193012a5618b6918d41fffe30ad0c1389256fee983e66ac24347', 'c8193ea2d2c7193012a5618b6918d41fffe30ad0c1389256fee983e66ac24347'},
 }
 # 短 getter 需要至少 32 字节锚点；两个编码器的 pitch 函数完全相同，需要相邻完整函数区分。
 # 相邻函数仅参与完整匹配和重定位核验，不修改其字节。
-ENCODE_CONTEXTS = {}
+ENCODE_CONTEXTS = {
+    "__ZN14Vcn2EncCommand15getFeedbackSizeEv": (
+        "__ZN14Vcn2EncCommand20addSessionInitPacketEv", 36,
+        {"053f7d73eba9f63f788d33260cea0e3a81e0850b62795d165948349bf15fc5d0", "30f2bdbaf54a9b10c7fe58119b8f288b5118bfa069bc062e01c15a7d248171d7"}),
+    "__ZN11Vcn2Encoder15setEncodeParamsEPvP15VAVendorTexture": (
+        "__ZN11Vcn2Encoder18setAvcEncodeParamsEPv", 292,
+        {"f1a48a1a06df4907da861452b1339311d836e1dde21167e6d15b0dfa9204ab3d", "e7d4ca36567f06e784dda6aeb0238fa9947d04ec562518f28e8c98628e1bf1e7"}),
+}
 
 
 def compile_payload(source, label):
@@ -98,15 +96,39 @@ def identify_payload(native, device_id, va_family):
 
 
 def main():
+    global WORK
+    parser = argparse.ArgumentParser(description=__doc__)
+    cache_args = parser.add_mutually_exclusive_group()
+    cache_args.add_argument('--sequoia-cache', type=Path)
+    cache_args.add_argument('--sonoma-cache', type=Path)
+    parser.add_argument('--refresh-encode', action='store_true', help='使用已核验的内嵌原生上下文刷新编码补丁')
+    parser.add_argument('--check', action='store_true', help='核对生成头，不写入生产数据')
+    args = parser.parse_args()
+    if args.refresh_encode:
+        from refresh_video_encode_data import refresh
+        WORK.mkdir(parents=True, exist_ok=True)
+        refresh(compile_payload((ROOT / "tools/video_encode_params.s").read_text(), "encode-params"))
+        return
+    system = 'sonoma' if args.sonoma_cache else 'sequoia'
+    directory = args.sonoma_cache or args.sequoia_cache
+    profile = json.loads((ROOT / f'tools/fixtures/{system}-compat.json').read_text()) if directory else None
+    if profile:
+        WORK = ROOT / f'build/{system}/video'
     WORK.mkdir(parents=True, exist_ok=True)
     capabilities = devices()
     if (0x1638, 5) not in capabilities:
         raise ValueError("缺少既有 Cezanne 配置")
-    cache = CacheReader()
+    cache = CacheReader(directory, profile['uuid']) if profile else CacheReader()
+    hashes = {n: v['sha256'] for n, v in profile['video'].items()} if profile else HASHES
+    contexts = profile['encodeContexts'] if profile else ENCODE_CONTEXTS
+    gva_address, gva_size, gva_hash, gva_offset, gva_branch = (
+        (profile['gva']['address'], profile['gva']['size'], profile['gva']['sha256'],
+         profile['gva']['offset'], bytes.fromhex(profile['gva']['branch'])) if profile else
+        (GVA_CHOICE_ADDRESS, GVA_CHOICE_SIZE, GVA_CHOICE_SHA256, 0x287, bytes.fromhex('0f84ac010000')))
     records = []
     full_functions = {}
     try:
-        lines = (CACHE / "dyld_shared_cache_x86_64h.map").read_text().splitlines()
+        lines = (cache.directory / "dyld_shared_cache_x86_64h.map").read_text().splitlines()
         image = "/System/Library/Extensions/AMDRadeonVADriver2.bundle/Contents/MacOS/AMDRadeonVADriver2"
         base = int(lines[lines.index(image) + 1].split()[1], 16)
         names, sections = symbols(cache.read, base)
@@ -115,44 +137,68 @@ def main():
             address = names[name]
             end = min(a for a in names.values() if a > address)
             code = cache.read(address, end - address)
-            if hashlib.sha256(code).hexdigest() != HASHES[name]:
+            expected = hashes[name]
+            actual = hashlib.sha256(code).hexdigest()
+            if actual not in expected if isinstance(expected, (set, frozenset)) else actual != expected:
                 raise ValueError(f"原生函数未核实：{name}")
             context = code
-            if name in ENCODE_CONTEXTS:
-                following, size, digest = ENCODE_CONTEXTS[name]
+            if name in contexts:
+                following, size, digest = contexts[name]
                 if end != names[following] or min(a for a in names.values() if a > end) != address + size:
                     raise ValueError(f"编码锚点边界未核实：{name}")
                 context = cache.read(address, size)
-                if hashlib.sha256(context).hexdigest() != digest:
+                if hashlib.sha256(context).hexdigest() not in digest:
                     raise ValueError(f"编码锚点未核实：{name}")
             full_functions[name] = (address, context)
             return address, code
 
-        def add(name, address, original, patched):
+        def add(name, address, original, patched, *, fairplay_decode=False):
             if len(original) != len(patched):
                 raise ValueError("补丁长度不相等")
-            records.append({"label": name, "address": address, "original": original.hex(), "patched": patched.hex()})
+            records.append({"label": name, "address": address, "original": original.hex(), "patched": patched.hex(),
+                            "fairplayDecode": fairplay_decode})
 
-        # Build 24.6 has a different board-id path from the historical
-        # MacBook-only fallback. Profile the selector, but do not patch it until
-        # a board-specific current branch is proven.
-        gva_choice = cache.read(GVA_CHOICE_ADDRESS, GVA_CHOICE_SIZE)
-        if hashlib.sha256(gva_choice).hexdigest() != GVA_CHOICE_SHA256:
-            raise ValueError("AppleGVA 选择函数未核实，拒绝生成")
+        # 非专用 AMD 机型的原生回退只选择 Intel；无 Intel 时跳到已有的 AMD 插入路径。
+        # 此前已检查至少存在一个可用 GPU，因此该出口必有 AMD，其他选择与显式请求不变。
+        # 该回站点是构建相关，已核验两个变体：steve 参考 build 的 GVA 选择函数
+        # (+0x287 jz+0x1AC)，以及 24H32 (15.8.1) 的 AppleGVA 内部变体
+        # (+0x283 jz+0x3D6，sequoia-compat profile 同一站点)。两处都按已核验
+        # 函数哈希+站点字节匹配后才生成 +0x2A 跳转；均不匹配时跳过。
+        gva_sites = [
+            (gva_address, gva_size, gva_hash, gva_offset, gva_branch),
+            (0x7FFA06692198, 1704, '1836eb3109e90afac34824654063b2cab953dbb55903cb94f222850a1fa67523',
+             0x283, bytes.fromhex('0f84d6030000')),
+        ]
+        gva_added = False
+        gva_function = None
+        for site_address, site_size, site_hash, site_offset, site_branch in gva_sites:
+            gva_choice = cache.read(site_address, site_size)
+            gva_actual = hashlib.sha256(gva_choice).hexdigest()
+            if gva_actual not in site_hash if isinstance(site_hash, (set, frozenset)) else gva_actual != site_hash:
+                continue
+            if gva_choice[site_offset:site_offset + 6] == site_branch:
+                # Sonoma 构建的同一站点函数布局不同，跳转目标更远。
+                replacement = "0f8470000000" if args.sonoma_cache else "0f842a000000"
+                add("AppleGVA_AMDOnlyFallback", site_address + site_offset,
+                    site_branch, bytes.fromhex(replacement))
+                gva_function = (site_address, gva_choice)
+                gva_added = True
+                break
+        if not gva_added:
+            import sys as _sys
+            print("WARNING: AppleGVA AMDOnlyFallback 站点在本构建未核实，跳过", file=_sys.stderr)
 
         name = "__ZN17VAAcceleratorInfo8identifyEjj"
         address, original = function(name)
-        # Darwin 24.6 returns enum 11 for Renoir/Cezanne IDs. Change only the
-        # default five-byte immediate in the device-gated patch set; all native
-        # classification paths remain intact.
-        assert original[0x11:0x16] == bytes.fromhex("bb0b000000")
-        add(name, address + 0x11, original[0x11:0x16], bytes.fromhex("bb05000000"))
+        identify_variants = {device: identify_payload(original, device, family) for device, family in capabilities}
+        add(name, address, original, identify_variants[0x1638], fairplay_decode=True)
         for name, offset in [("__ZN9VAFactory20createGraphicsEngineEP9VAContext", 10),
                              ("__ZN9VAFactory14createImageBltEP9VAContextj", 11)]:
             address, code = function(name)
             assert code[offset:offset + 10] == bytes.fromhex("488b86600400008b400c")
-            add(name, address + offset, code[offset:offset + 10], bytes.fromhex("b8020000009090909090"))
-        for name in HASHES:
+            add(name, address + offset, code[offset:offset + 10], bytes.fromhex("b8020000009090909090"),
+                fairplay_decode=True)
+        for name in hashes:
             if "VPEi" not in name:
                 continue
             address, code = function(name)
@@ -162,19 +208,46 @@ def main():
             assert code[offset + 7] < 0x80
             target = offset + 8 + code[offset + 7]
             patched = b"\xbe\x02\x00\x00\x00\xeb" + bytes([target - offset - 7]) + b"\x90"
-            add(name, address + offset, code[offset:offset + 8], patched)
+            add(name, address + offset, code[offset:offset + 8], patched, fairplay_decode=True)
         name = "__ZN18VAAddrLibInterface4initEP11VAIOConnectP13sHardwareInfo"
         address, code = function(name)
-        assert code[0x8B:0x92] == bytes.fromhex("4181fc8d000000")
-        add(name, address + 0x8E, b"\x8d", b"\x8e")
+        compare = 0x8E if args.sonoma_cache else 0x8B
+        assert code[compare:compare + 7] == bytes.fromhex("4181fc8d000000")
+        add(name, address + compare + 3, b"\x8d", b"\x8e", fairplay_decode=True)
+        name = "__ZN11VACPFactory8createCPEP11_VAHWConfigP11VAIOConnectPP4VACp"
+        address, code = function(name)
+        compare = 0x36 if args.sonoma_cache else 0x3F
+        assert code[compare:compare + 5] == bytes.fromhex("83f9047317")
+        # APU 识别复用 VCN2 枚举 5；内容保护工厂需承接到已有 PSP 实现。
+        add(name, address + compare + 2, b"\x04", b"\x05", fairplay_decode=True)
         name = "__ZN4Addr3Lib6CreateEPK18_ADDR_CREATE_INPUTP19_ADDR_CREATE_OUTPUT"
         address, code = function(name)
         assert code[0xB5:0xBA] == bytes.fromhex("3d8d000000")
-        add(name, address + 0xB6, b"\x8d", b"\x8e")
+        add(name, address + 0xB6, b"\x8d", b"\x8e", fairplay_decode=True)
         name = "__ZN4Addr2V27Gfx9Lib20HwlConvertChipFamilyEjj"
         address, code = function(name)
-        add(name, address, code, compile_payload((ROOT / "tools/video_addr_convert.s").read_text(), "addr-convert"))
-        # Encode-side patches are not part of this Darwin 24 decode candidate.
+        add(name, address, code, compile_payload((ROOT / "tools/video_addr_convert.s").read_text(), "addr-convert"),
+            fairplay_decode=True)
+        # 本机固件写入 48 字节反馈；原生 Vcn2 使用 164 字节，后续帧因此读到零或无关数据。
+        name = "__ZN14Vcn2EncCommand15getFeedbackSizeEv"
+        address, code = function(name)
+        assert code[4:9] == bytes.fromhex("b8a4000000")
+        add(name, address + 4, code[4:9], bytes.fromhex("b830000000"))
+        for name in [
+            "__ZN26AVDVcn2AvcEncDataProcessor19ProcessEncodeStatusEP19_VAEncodeStatusInfoPvP15VAVendorTexture",
+            "__ZN27AVDVcn2HevcEncDataProcessor19ProcessEncodeStatusEP19_VAEncodeStatusInfoPvP15VAVendorTexture",
+        ]:
+            address, code = function(name)
+            assert code[0x2A:0x31] == bytes.fromhex("4869c0a4000000")
+            add(name, address + 0x2A, code[0x2A:0x31], bytes.fromhex("4869c030000000"))
+        # 按实际纹理元素大小设置 P010 输入参数，同时保留原有 pitch 换算。
+        name = "__ZN11Vcn2Encoder15setEncodeParamsEPvP15VAVendorTexture"
+        address, code = function(name)
+        assert len(code) == (148 if args.sonoma_cache else 138)
+        payload = compile_payload((ROOT / "tools/video_encode_params.s").read_text(), "encode-params")
+        payload += b'\x90' * (len(code) - len(payload))
+        assert len(payload) == len(code)
+        add(name, address, code, payload)
         code_section = next(s for s in sections if s[0] == "__text")
         text = cache.read(code_section[1], code_section[2])
         for old, new in [(0x2220221, 0x2020201), (0x6660661, 0x6060601)]:
@@ -185,14 +258,23 @@ def main():
                 if not any(s in parent[1] for s in ["HwlGetPreferredSurfaceSetting", "HwlComputeSurfaceInfoSanityCheck",
                                                    "IsValidDisplaySwizzleMode", "ValidateSwModeParams"]):
                     raise ValueError("swizzle mask 位于未核实的消费者")
-                add(parent[1], address, struct.pack("<I", old), struct.pack("<I", new))
+                add(parent[1], address, struct.pack("<I", old), struct.pack("<I", new), fairplay_decode=True)
                 count += 1
                 cursor = offset + 1
             if count != 4:
                 raise ValueError("swizzle mask 数量不匹配")
         records.sort(key=lambda r: r["address"])
+        # 掩码随排序后的记录生成；只允许显式标记的 AMD 解码项，AppleGVA 与编码项不进入候选。
+        if len(records) > 32:
+            raise ValueError("FairPlay 解码掩码超出 UInt32")
+        decode_mask = 0
+        for i, record in enumerate(records):
+            if record["fairplayDecode"]:
+                if not code_section[1] <= record["address"] < code_section[1] + code_section[2]:
+                    raise ValueError("FairPlay 解码项不属于 AMD 驱动代码段")
+                decode_mask |= 1 << i
         resolver = ResolverData(cache, WORK)
-        functions = {**full_functions}
+        functions = {**({"AppleGVA_AMDOnlyFallback": gva_function} if gva_function else {}), **full_functions}
         for record in records:
             label = record["label"]
             if label not in functions:
@@ -212,9 +294,11 @@ def main():
             indices[label] = resolver.add(address, code, bytes(patched))
         locations = [(indices[r["label"]], r["address"]-functions[r["label"]][0]) for r in records]
         header = "// 由 tools/build_video_decode_patch.py 生成，不手工编辑。\n#pragma once\n#include <IOKit/IOTypes.h>\n#include <UserCacheResolver.hpp>\n"
-        header += "namespace UserVideoDecodeData {\n" + array("CacheMagic", cache.magic) + array("CacheUUID", cache.uuid)
+        namespace = ('UserSonomaVideoData' if args.sonoma_cache else 'UserSequoiaVideoData') if profile else 'UserVideoDecodeData'
+        header += f"namespace {namespace} {{\n" + array("CacheMagic", cache.magic) + array("CacheUUID", cache.uuid)
         header += f"inline constexpr UInt64 CacheBase = 0x{cache.base:X}ULL;\n"
-        header += "struct Patch { UInt64 offset; const UInt8* original; const UInt8* patched; UInt32 size; };\n"
+        header += ("using Patch = UserVideoDecodeData::Patch;\n" if profile else
+                   "struct Patch { UInt64 offset; const UInt8* original; const UInt8* patched; UInt32 size; };\n")
         for i, record in enumerate(records):
             address, size = record["address"], len(bytes.fromhex(record["original"]))
             if address // 4096 != (address + size - 1) // 4096:
@@ -228,21 +312,43 @@ def main():
             header += f'    {{0x{record["address"] - cache.base:X}ULL, Original{i}, Patched{i}, sizeof(Original{i})}},\n'
         pages = len({r["address"] // 4096 for r in records})
         header += "};\n"
+        header += f"inline constexpr UInt32 FairPlayDecodeMask = 0x{decode_mask:X}U;\n"
+        identify_index = next(i for i, record in enumerate(records) if record['label'] == '__ZN17VAAcceleratorInfo8identifyEjj')
         device_records = []
         for device, _ in capabilities:
             variants = [dict(record) for record in records]
+            variants[identify_index]['patched'] = identify_variants[device].hex()
             device_records.append({'device_id': device, 'records': variants})
+            if device == 0x1638:
+                continue
+            suffix = f'{device:04X}'
+            header += array(f'Identify{suffix}', identify_variants[device])
+            header += f'inline constexpr Patch Patches{suffix}[] = {{\n'
+            for i in range(len(records)):
+                if i == identify_index:
+                    header += (f'    {{Patches[{i}].offset, Original{i}, Identify{suffix}, sizeof(Original{i})}},\n')
+                else:
+                    header += f'    Patches[{i}],\n'
+            header += '};\n'
         header += 'struct DevicePatchSet { UInt32 deviceID; const Patch* patches; };\n'
         header += 'inline constexpr DevicePatchSet DevicePatches[] = {\n'
         for device, _ in capabilities:
-            header += f'    {{0x{device:04X}, Patches}},\n'
+            name = 'Patches' if device == 0x1638 else f'Patches{device:04X}'
+            header += f'    {{0x{device:04X}, {name}}},\n'
         header += '};\n'
         header += ('inline constexpr const Patch* findDevice(UInt32 deviceID) {\n'
                    '    for (const auto& entry : DevicePatches) { if (entry.deviceID == deviceID) { return entry.patches; } }\n'
                    '    return nullptr;\n}\n')
         header += resolver.header(locations)
         header += f"inline constexpr UInt32 MaxPatchSize = 448;\ninline constexpr UInt32 PageCount = {pages};\n}}\n"
-        (ROOT / "NootedRed/UserVideoDecodeData.hpp").write_text(header)
+        if profile:
+            header = header.replace('#include <UserCacheResolver.hpp>', '#include <UserVideoDecodeData.hpp>')
+        output = ROOT / f'NootedRed/{namespace}.hpp'
+        if args.check:
+            if output.read_text() != header:
+                raise ValueError(f'生成数据过期：{output}')
+        else:
+            output.write_text(header)
         (WORK / "user-patches.json").write_text(json.dumps({"records": records, "pages": pages,
                                                            "device_records": device_records,
                                                            "cacheUUID": cache.uuid.hex()}, indent=2) + "\n")

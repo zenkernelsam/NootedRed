@@ -6,15 +6,18 @@ import struct
 import subprocess
 from metal_cache import CacheReader, macho, array, IMAGE
 from build_compute_scratch_patch import generate as generate_scratch, supported_devices
-from cache_resolver_data import ResolverData, containing_function
+from cache_resolver_data import ResolverData
 
 ROOT = Path(__file__).resolve().parents[1]
 WORK = ROOT / "build/user-surface-sync"
 FUNCTIONS = {
+    # 摘要为整函数 SHA-256；首项为 steve 参考 pin，24H32 实测变体列于其后。
     "init": ("__Z29amdMtl_HWL_InitDeviceSettingsP18AMD_DeviceSettingsP18AMDCommonHwInfoRec",
-             "886322b1d50af710d30ed4354c9b3000fee462c86e7c6ac0300ba88c4b3321e4"),
+             {"886322b1d50af710d30ed4354c9b3000fee462c86e7c6ac0300ba88c4b3321e4",
+              "54ebf2cfa09839755428245de73b5e2662c259306fb9de9ce103e83fafeb423f"}),
     "override": ("__Z33amdMtl_HWL_OverrideDeviceSettingsP18AMD_DeviceSettingsP18AMDCommonHwInfoRec",
-                 "8944785f90985578b38c777def41df74dd6028f0eac779cdf396a17dc104cc8b"),
+                 {"8944785f90985578b38c777def41df74dd6028f0eac779cdf396a17dc104cc8b",
+                  "580a055bd41ed3f1aae6aa8f84c50b972558db30593f9e0c6e4ebbf8d761e21e"}),
 }
 
 
@@ -50,10 +53,10 @@ def main():
         originals = {}
         for label, (name, digest) in FUNCTIONS.items():
             address, code = cache.function(name)
-            if hashlib.sha256(code).hexdigest() != digest:
+            if hashlib.sha256(code).hexdigest() not in digest:
                 raise ValueError(f"{label} 未核实，拒绝生成")
             originals[label] = {"address": address, "code": code.hex()}
-        if cache.read(0x7FFB10FBFDE8, 4) != struct.pack("<f", 3.0):
+        if cache.read(0x7FFB10FC1DE8, 4) != struct.pack("<f", 3.0):
             raise ValueError("原生常量不匹配")
         obj = WORK / "init.o"
         subprocess.run(["clang", "-c", str(ROOT / "tools/surface_sync_init.s"), "-o", str(obj)],
@@ -90,22 +93,15 @@ def main():
                           for device in supported_devices()]
         ctor_address, ctor_code = cache.function(
             "-[GFX9_MtlRenderPipelineState initWithDevice:pipelineStateDescriptor:vertexVariant:fragmentVariant:]")
-        if hashlib.sha256(ctor_code).hexdigest() != "9d78fd28bb509a95ce68fdb879d507388bf1625f54439da53622aa1097ee339b":
+        if hashlib.sha256(ctor_code).hexdigest() != "e0b58ef182e1ee4ffb5825d2dbd92a61686117f8af3a3fa6e9972135f296133d":
             raise ValueError("pipeline 构造函数未核实")
-        gate_address = 0x7ffb10c77708
+        gate_address = 0x7ffb10c79708
         gate_code = cache.read(gate_address, 2)
         if gate_code != bytes.fromhex("7428"):
             raise ValueError("RB+ 能力分支未核实")
         legacy_records = [dict(r) for r in candidate_records]
         legacy_records.append({"label": "blend-capability-gate", "address": gate_address,
                                "original": gate_code.hex(), "patched": "9090"})
-        # 仅保留旧实验的原始字节检查；不生成已撤回的 VT 替换代码。
-        withdrawn_guards = []
-        for address, expected in [(0x7FF81585FD97, "7428"), (0x7FF815861D17, "0f8482040000")]:
-            original = cache.read(address, len(bytes.fromhex(expected)))
-            if original != bytes.fromhex(expected):
-                raise ValueError("VideoToolbox 原始选择分支不匹配")
-            withdrawn_guards.append({"address": address, "original": original.hex()})
         device_scratch_records = [
             {"device_id": device, "records": [*legacy_records, generate_scratch(cache, device)]}
             for device in supported_devices()
@@ -122,26 +118,21 @@ def main():
         header += "struct Patch { UInt64 offset; const UInt8* original; const UInt8* patched; UInt32 size; };\n"
         for i, r in enumerate(records):
             header += array(f"Original{i}", bytes.fromhex(r["original"])) + array(f"Patched{i}", bytes.fromhex(r["patched"]))
-            header += array(f"SrdSharedPatched{i}", bytes.fromhex(candidate_records[i]["patched"]))
+            if i == 0:
+                header += array(f"SrdSharedPatched{i}", bytes.fromhex(candidate_records[i]["patched"]))
 
         header += "inline constexpr Patch Patches[] = {\n" + ",\n".join(
             f"    {{0x{r['address']-cache.base:X}ULL, Original{i}, Patched{i}, sizeof(Original{i})}}"
             for i, r in enumerate(records)) + "\n};\n"
         header += "inline constexpr Patch SrdSharedPatches[] = {\n" + ",\n".join(
-            f"    {{0x{r['address']-cache.base:X}ULL, Original{i}, SrdSharedPatched{i}, sizeof(Original{i})}}"
+            f"    {{0x{r['address']-cache.base:X}ULL, Original{i}, {'SrdSharedPatched0' if i == 0 else 'Patched1'}, sizeof(Original{i})}}"
             for i, r in enumerate(records)) + "\n};\n"
         header += array("BlendGateOriginal", gate_code) + array("BlendGatePatched", bytes.fromhex("9090"))
         header += "inline constexpr Patch LegacyBlendPatches[] = {\n" + ",\n".join(
             f"    {{0x{r['address']-cache.base:X}ULL, " +
-            (f"Original{i}, SrdSharedPatched{i}, sizeof(Original{i})" if i < 2 else
+            (f"Original{i}, {'SrdSharedPatched0' if i == 0 else 'Patched1'}, sizeof(Original{i})" if i < 2 else
              "BlendGateOriginal, BlendGatePatched, sizeof(BlendGateOriginal)") + "}"
             for i, r in enumerate(legacy_records)) + "\n};\n"
-        header += "struct Guard { UInt64 offset; const UInt8* original; UInt32 size; };\n"
-        for i, r in enumerate(withdrawn_guards):
-            header += array(f"WithdrawnOriginal{i}", bytes.fromhex(r["original"]))
-        header += "inline constexpr Guard WithdrawnTransferGuards[] = {\n" + ",\n".join(
-            f"    {{0x{r['address']-cache.base:X}ULL, WithdrawnOriginal{i}, sizeof(WithdrawnOriginal{i})}}"
-            for i, r in enumerate(withdrawn_guards)) + "\n};\n"
         header += array("ScratchOriginal", bytes.fromhex(scratch_record["original"]))
         # 各设备共享原始代码、覆盖跳转与混合分支；仅初始化比较立即数不同。
         for entry in device_records[1:]:
@@ -177,7 +168,7 @@ def main():
                    "    for (const auto& entry : DevicePatches) { if (entry.deviceID == deviceID) { return &entry; } }\n"
                    "    return nullptr;\n}\n")
         # 动态缓存解析只接受相同实现的完整函数；UUID 不参与兼容判定。
-        targets = [0x7FFB10FBFDE8, 0x7FFB10C5422B, 0x7FFB10C545C6]
+        targets = [0x7FFB10FC1DE8, 0x7FFB10C5622B, 0x7FFB10C565C6]
         init_address = originals['init']['address']
         variants = [('OriginalInitLinks', bytes.fromhex(records[0]['original'])),
                     ('ImmediateInitLinks', payload), ('SharedInitLinks', candidate_payload)]
@@ -204,21 +195,14 @@ def main():
         scratch_resolver = ResolverData(cache, WORK / 'scratch')
         scratch_resolver.add(scratch_record['address'], bytes.fromhex(scratch_record['original']),
                              bytes.fromhex(scratch_record['patched']))
-        # 撤回策略的 VT 跳转仍需按完整原生函数核验，不能沿用参考缓存的固定偏移。
-        _, vt_base = scratch_resolver.owner(withdrawn_guards[0]['address'])
-        vt_address, vt_code = containing_function(cache, vt_base, withdrawn_guards[0]['address'])
-        if not vt_address <= withdrawn_guards[1]['address'] < vt_address + len(vt_code):
-            raise ValueError('撤回跳转的原生函数范围变化')
-        scratch_resolver.add(vt_address, vt_code, vt_code)
         header += 'namespace ScratchResolverData {\n' + scratch_resolver.header([(0, 0)]) + '}\n'
-        header += f"inline constexpr UInt32 MaxPatchSize = 452;\ninline constexpr UInt32 PageCount = {len(pages)};\n}}\n"
+        header += "inline constexpr UInt32 MaxPatchSize = 452;\n}\n"
         (WORK / "UserSurfaceSyncData.hpp").write_text(header)
         (ROOT / "NootedRed/UserSurfaceSyncData.hpp").write_text(header)
         (WORK / "patch-data.json").write_text(json.dumps({"originals": originals, "records": records,
                                                          "srd_shared_records": candidate_records,
                                                          "device_records": device_records,
                                                          "legacy_blend_records": legacy_records,
-                                                         "withdrawn_guards": withdrawn_guards,
                                                          "compute_scratch_records": scratch_records,
                                                          "device_compute_scratch_records": device_scratch_records,
                                                          "cache_base": cache.base}, indent=2) + "\n")
