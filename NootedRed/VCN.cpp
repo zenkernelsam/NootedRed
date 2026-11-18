@@ -42,19 +42,20 @@ namespace
         const OSMetaClass* oldClass{nullptr};
         const OSMetaClass* newClass{nullptr};
     };
-    Pair                  pairs[4];
+    Pair                  pairs[6];
     constexpr const char* classes[] = {"AMDGraphicsAccelerator", "AMDAccelVideoContext", "AMDAccelChannel",
-                                       "IAMDHWChannel"};
-    constexpr unsigned    lengths[] = {37, 35, 30, 28};
+                                       "IAMDHWChannel", "AMDHWVMContext", "IAMDHWVMContext"};
+    constexpr unsigned    lengths[] = {37, 35, 30, 28, 29, 30};
     UInt32                hardwareInitCount{0};
     bool                  vp9BackendReady{false};
+    bool                  logCastMiss{false};
 
     bool supported()
     {
         return requested && VCNCapabilities::rejection(NRed::singleton().getDeviceID(), currentKernelVersion()) == 0;
     }
 
-    // Scrive le chiavi della sonda VP9 sull'acceleratore (fase V1, -NRedVP9Probe).
+    // 在加速器上发布已就绪的 VP9 解码能力。
     struct VP9ServiceSink
     {
         IOService* service;
@@ -79,13 +80,11 @@ namespace
 
     void publishVP9Probe(void* self, bool started)
     {
-        if (!checkKernelArgument(VP9Probe::BootArg)) { return; }
         VP9ServiceSink sink{static_cast<IOService*>(self)};
         bool           available;
         do {
-            available = __atomic_load_n(&vp9BackendReady, __ATOMIC_ACQUIRE);
-            const auto status =
-                VP9Probe::publish(sink, started && VCN::ready() && checkKernelArgument("-NRedVP9") && available);
+            available         = __atomic_load_n(&vp9BackendReady, __ATOMIC_ACQUIRE);
+            const auto status = VP9Probe::publish(sink, started && VCN::ready() && available);
             NRed::singleton().setProp32(VP9Probe::StatusKey, status);
         }
         while (available != __atomic_load_n(&vp9BackendReady, __ATOMIC_ACQUIRE));
@@ -142,6 +141,17 @@ namespace
             if (!alternative) { continue; }
             result = original(object, alternative);
             if (result && result->getMetaClass()->getClassSize() >= target->getClassSize()) { return result; }
+        }
+        // A miss on a VM class is where the VCN engine's per-client VMID assignment falls back to a
+        // stale context (xiaot-evo eedbc2d); keep the failing names visible under -NRedDebug.
+        if (logCastMiss) {
+            const char* targetName = target->getClassName();
+            if (targetName != nullptr && strstr(targetName, "VM") != nullptr) {
+                const OSMetaClass* objectMeta = object->getMetaClass();
+                DBGLOG("VCN", "safeMetaCast miss: %s -> %s",
+                       objectMeta != nullptr ? objectMeta->getClassName() : "?", targetName);
+                (void)objectMeta;
+            }
         }
         return nullptr;
     }
@@ -304,8 +314,9 @@ namespace
 
 void VCN::setVP9Ready(const bool available)
 {
+    if (!requested) { return; }
     const bool previous = __atomic_exchange_n(&vp9BackendReady, available, __ATOMIC_ACQ_REL);
-    if (previous == available || !checkKernelArgument(VP9Probe::BootArg)) { return; }
+    if (previous == available) { return; }
     auto* matching = IOService::serviceMatching("AMDRadeonX5000_AMDGraphicsAccelerator");
     auto* services = matching ? IOService::getMatchingServices(matching) : nullptr;
     OSSafeReleaseNULL(matching);
@@ -324,6 +335,7 @@ void VCN::setVP9Ready(const bool available)
 void VCN::init()
 {
     requested = checkKernelArgument("-NRedVideoFix") || checkKernelArgument("-NRedVCN");
+    logCastMiss = checkKernelArgument("-NRedDebug");
     if (requested) { lilu.onKextLoadForce(&x6000); }
 }
 bool VCN::ready()
@@ -366,8 +378,15 @@ void VCN::processKext(KernelPatcher& patcher, size_t id, mach_vm_address_t slide
         char name[112];
         snprintf(name, sizeof(name), "__ZN%uAMDRadeonX%s_%s10gMetaClassE", lengths[i], old ? "5000" : "6000",
                  classes[i]);
-        auto& target  = old ? pairs[i].oldClass : pairs[i].newClass;
-        ok           &= resolve(patcher, id, name, target, slide, size);
+        auto& target = old ? pairs[i].oldClass : pairs[i].newClass;
+        // The VM-context pairs extend coverage only; a kext lacking them must not drop the bridge.
+        if (i < 4) {
+            ok &= resolve(patcher, id, name, target, slide, size);
+        }
+        else {
+            resolve(patcher, id, name, target, slide, size);
+            patcher.clearError();
+        }
     }
     if (old) {
         ok &= resolve(patcher, id, "__ZN39AMDRadeonX5000_AMDAccelSharedUserClient5startEP9IOService", clientStart5000,

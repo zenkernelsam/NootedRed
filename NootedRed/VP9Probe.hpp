@@ -1,4 +1,4 @@
-// -NRedVP9Probe：仅在 VP9 后端已安装并恢复 RX 权限后发布解码能力。
+// 仅在 VP9 后端已安装并恢复 RX 权限后发布解码能力。
 // Pubblica sull'acceleratore le tre chiavi che servono (vedi docs/vp9-v0-findings.md):
 //   IOGVAXDecode                  -> carica il plugin AppleGVAVPXDecoder (CMDependencies)
 //   IOGVAVP9Decode                -> AppleGVA trova il codec VP9 della GPU
@@ -12,7 +12,6 @@
 namespace VP9Probe
 {
 
-    constexpr const char* BootArg         = "-NRedVP9Probe";
     constexpr const char* StatusKey       = "NRedVP9Probe";
     constexpr const char* PluginKey       = "IOGVAXDecode";
     constexpr const char* PluginValue     = "2";    // stesso valore dei Mac Intel che hanno il VP9
@@ -20,8 +19,7 @@ namespace VP9Probe
     constexpr const char* DecodeValue     = "1";    // come IOGVAHEVCDecode nella personality
     constexpr const char* CapabilitiesKey = "IOGVAVP9DecodeCapabilities";
     constexpr const char* ProfilesKey     = "VTSupportedProfileArray";
-    // Solo profilo 0 (8 bit 4:2:0). Il profilo 2 (10 bit) arriva con la fase V6.
-    constexpr UInt32      Profiles[]      = {0};
+    constexpr UInt32      Profiles[]      = {0, 2};
     constexpr size_t      ProfileCount    = sizeof(Profiles) / sizeof(Profiles[0]);
 
     enum Status : UInt32

@@ -7,13 +7,18 @@
 | 系统 | 参考缓存 | 显示数据 | 视频数据 |
 | --- | --- | --- | --- |
 | macOS 14.8.9 / 23J631 | `4C1441FD-8A54-3DC2-863D-49110B946A25` | `UserSonomaSurfaceData` | `UserSonomaVideoData` |
-| macOS 15.8.1 / 24H32 | `42EC2890-BC40-317E-BB27-45142BFF7F26` | `UserSequoiaSurfaceData` | `UserSequoiaVideoData` |
+| macOS 15.8.3 / 24H241 | `0FAEE1E1-7A09-3A16-922E-D6E1663C715F` | `UserSequoiaSurfaceData` | `UserSequoiaVideoData` |
 | macOS 26.7.2 | `21FB8708-FC8E-3765-BE8C-65D612CDF049` | `UserSurfaceSyncData` / `UserSurfaceConstructorData` | `UserVideoDecodeData` |
 
 Darwin 23 的参考数据来自 macOS 14.8.9 / 23J631 的只读系统缓存镜像。
 原生函数地址、长度、SHA-256 和上下文记录在 `tools/fixtures/sonoma-compat.json`。
 UUID 用于溯源、诊断与 FVRC 身份核对；参考 UUID 也必须通过完整函数和引用核验。
 未知函数实现、绑定目标、设备或 ABI 继续拒绝，不按主版本直接放行。
+
+Darwin 23–25 共用 Metal 初始化及覆盖入口核验、Scratch 与构造器解析、SubmitGuard 和 VCN 解析。
+`UserPatchProfiles.hpp` 按版本选择原生函数、载荷和节坐标。FVRC 冷路径和热路径均核验实际引用和绑定。
+Sonoma 的节坐标来自 23J631，Sequoia 来自 24H241。Sequoia 视频函数和上下文记录在
+`tools/fixtures/sequoia-video-15.8.3.json`。15.8.1 的验证范围为冻结函数、载荷和模拟节布局。
 
 ## 功能与参数
 

@@ -8,7 +8,8 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 SONOMA = '--sonoma' in sys.argv
 LEGACY = SONOMA or '--sequoia' in sys.argv
-WORK = ROOT / ('build/dynamic-cache/sonoma-video' if SONOMA else 'build/dynamic-cache/sequoia-video' if '--sequoia' in sys.argv else 'build/dynamic-cache/video')
+WORK = ROOT / 'build/dynamic-cache' / ('vp9' if '--vp9' in sys.argv else 'sonoma-video' if SONOMA
+                                      else 'sequoia-video' if '--sequoia' in sys.argv else 'video')
 
 
 def main():
@@ -52,7 +53,7 @@ template<class T>void settlePatched(Participant& p,const T& plan){p.outcome=Outc
 }
 ''' + preamble[end:]
     preamble = preamble.replace('assert(strcmp(s,"-NRedVideoFix")==0||strcmp(s,"-NRedNoFVRC")==0);',
-                                'if(strcmp(s,"-NRedVideoFix")&&strcmp(s,"-NRedNoFVRC"))return false;')
+                                'if(strcmp(s,"-NRedRejectTrace")==0)return false;if(strcmp(s,"-NRedVCN")==0)return flag;assert(strcmp(s,"-NRedVideoFix")==0||strcmp(s,"-NRedNoFVRC")==0);')
     preamble = preamble.replace('bool allocated(){return active;}', 'static bool vp9Ready=false;bool allocated(){return active;}void setVP9Ready(bool v){vp9Ready=v;}')
     preamble = preamble.replace('#include "UserVideoDecodeData.hpp"', '#include <vector>\n#include "UserVideoDecodeData.hpp"\n#include "UserVideoDecodeResolver.hpp"')
     preamble += '#include "user-cache-dynamic.hpp"\n'
@@ -140,13 +141,70 @@ static void setup(unsigned id){
 }
 static void call(){SharedRegionCheckArgs args{0x1000};int value=0;assert(wrappedSharedRegionCheck(drmClient?reinterpret_cast<void*>(217):nullptr,&args,&value)==0&&value==123);assert(liveTransactions==0&&liveDynamicPlans==0);}
 int main(){
+#ifndef BASELINE
+ auto checkRDD=[]<typename Data>(unsigned major){
+  const auto prepare=[&]{
+   cache(Data::Images,Data::Functions,true,Data::Targets,std::size(Data::Targets));
+   readUser=reader;
+  };
+  prepare();
+  UserVideoDecodeResolver::RDDPlan candidate;
+  uint8_t scan[UserSharedCache::Input::ScanSize];
+  UserSharedCache::Input input{reader,{}};
+  input.scanBuffer=scan;
+  const auto resolve=[&](unsigned version){
+   input.reads=input.bytes=input.candidates=0;input.failed=false;
+   return UserVideoDecodeResolver::resolveRDD(input,base,candidate,version);
+  };
+  assert(!resolve(22)&&!resolve(26));
+  assert(resolve(major));
+  VPF::FastResolution fast{};
+  VPF::VerifiedPatchPlan install;
+  install.reset(base,input.cache);
+  assert(appendVTRDDCandidates(install,input,base,major,candidate,fast));
+  assert(install.siteCount()==std::size(Data::Sites));
+  assert(install.seal(VPF::PlanState::AllOriginal));
+  for(unsigned i=0;i<std::size(Data::Sites);++i){
+   const auto& patch=candidate.patches[i];
+   const auto& loc=Data::Locations[i];
+   assert(patch.offset==functionAddresses[loc.function]+loc.offset-base);
+   assert(patch.offset!=Data::Sites[i].offset);
+   std::vector<uint8_t> actual(patch.size);
+   assert(reader(base+patch.offset,actual.data(),actual.size())==0);
+   assert(memcmp(actual.data(),patch.original,actual.size())==0);
+   put(base+patch.offset,patch.patched,patch.size);
+  }
+  assert(resolve(major));
+  assert(candidate.count==std::size(Data::Sites));
+  for(unsigned i=0;i<std::size(Data::Functions);++i)assert(candidate.locations[i].address&&candidate.locations[i].patched);
+
+  prepare();
+  const auto& last=Data::Locations[std::size(Data::Sites)-1];
+  uint8_t invalid=0xCC;
+  put(functionAddresses[last.function]+last.offset,&invalid,1);
+  assert(!resolve(major));
+  install.reset(base,input.cache);
+  assert(appendVTRDDCandidates(install,input,base,major,candidate,fast));
+  assert(install.siteCount()==0);
+
+  prepare();
+  const auto& ref=Data::Functions[0].originalRefs[0];
+  rel(functionAddresses[0],ref.offset,destination(ref,Data::Functions,std::size(Data::Functions))+8);
+  assert(!resolve(major));
+ };
+ checkRDD.template operator()<UserVTRDDCandidateData::Sonoma::Profile>(23);
+ checkRDD.template operator()<UserPatchProfiles::Sequoia::VTRDD>(24);
+ checkRDD.template operator()<UserPatchProfiles::Tahoe::VTRDD>(25);
+#endif
  // 执行真实初始化入口：三系统注册相同生命周期和共享缓存 Hook。
  for(unsigned major:{23U,24U,25U}){
   Version::majorValue=major;NRed::device=0x1638;properties.clear();
   flag=false;KernelPatcher disabled;UserVideoDecode::init(disabled);assert(disabled.routes==0&&disabled.solves==0);
+  assert(!properties.contains("NRedVP9State"));
   flag=true;KernelPatcher enabled;UserVideoDecode::init(enabled);
   assert(enabled.routes==2&&properties.at("NRedVCNUserEnabled")==1);
   assert(properties.at("NRedDRMVideoRevision")==5);
+  assert(properties.at("NRedVP9State")==1&&VP9::lock&&VP9::plan);
   assert(devicePatches==(major==23?INIT_SONOMA::findDevice(0x1638):
                          major==24?INIT_SEQUOIA::findDevice(0x1638):INIT_TAHOE::findDevice(0x1638)));
   for(unsigned device:{0x15D8U,0x15DDU,0xFFFF1638U}){
@@ -194,7 +252,10 @@ int main(){
    case 5:word64(base+0x1000+32,imageAddresses[0]-0x200000);word32(base+0x1018+32,0x3000);break;
    case 6:word64(base+232,0xffffffffffffffffULL);break;
    case 7:failedRead=functionAddresses[0];break;
-   case 8:{std::vector<uint8_t> b(ResolverFunctions[0].size);assert(reader(functionAddresses[0],b.data(),b.size())==0);put(imageAddresses[0]+0x5e000,b.data(),b.size());}break;
+   case 8:{auto&fn=ResolverFunctions[0];std::vector<uint8_t> b(fn.size);assert(reader(functionAddresses[0],b.data(),b.size())==0);
+    const auto copy=imageAddresses[0]+0x5e000;put(copy,b.data(),b.size());
+    for(unsigned r=0;r<fn.originalCount;r++){auto&ref=fn.originalRefs[r];uint64_t target=0;
+     assert(UserSharedCache::relativeTarget(functionAddresses[0],ref.offset,b.data(),target));rel(copy,ref.offset,target);}}break;
    case 9:word64(base+0x7000000,0);break;
    case 10:rel(functionAddresses[0],ResolverFunctions[0].originalRefs[0].offset,base+0x7010000);break;
    case 11:put(base,"invalid",7);break;
@@ -260,13 +321,20 @@ int main(){
         begin = harness.index('int main(){')
         harness = harness[:begin] + r'''
 #include "vp9-cache-dynamic.hpp"
-int main(){
- setup(0x1638);vp9Cache();cleanBlocks=blocks;darwinMajor=25;
+template<class Images,class Functions,class Sections,class Slots>
+static void checkVP9Install(unsigned major,const Images& images,const Functions& functions,const Sections& sections,
+                            const Slots& slots){
+ VP9::state=VP9::State::Off;VCN::vp9Ready=false;properties.clear();
+ Version::majorValue=major;NRed::device=0x1638;
+ flag=false;KernelPatcher disabled;UserVideoDecode::init(disabled);
+ assert(disabled.routes==0&&!VP9::lock&&!VP9::plan&&!properties.contains("NRedVP9State"));
+ flag=true;KernelPatcher enabled;UserVideoDecode::init(enabled);
+ assert(enabled.routes==2&&VP9::lock&&VP9::plan&&properties.at("NRedVP9State")==1);
+ setup(0x1638);vp9Cache(images,functions,sections,slots);cleanBlocks=blocks;
  static UserVP9DecodeResolver::Plan resolved;
  UserSharedCache::Input input{reader,{}};UInt8 scan[UserSharedCache::Input::ScanSize];input.scanBuffer=scan;
- assert(UserVP9DecodeResolver::resolve(input,base,resolved));
- pages(resolved.patches,VP9::SiteCount);
- VP9::enabled=true;VP9::lock=IOLockAlloc();VP9::plan=IONew(UserVP9DecodeResolver::Plan,1);
+ assert(UserVP9DecodeResolver::resolve(input,base,resolved,major));
+ pages(resolved.patches,resolved.count);
  UInt8 uuid[16];assert(reader(base+88,uuid,16)==0);
  auto initial=blocks;
  UserPatchCoordinator::Participant first;
@@ -276,7 +344,7 @@ int main(){
  failedProtect=0;
  UserPatchCoordinator::Participant installed;
  VP9::install(map(nullptr),base,uuid,&installed);
- assert(installed.outcome==UserPatchCoordinator::Outcome::Patched&&installed.proofSites==VP9::SiteCount&&VCN::vp9Ready);
+ assert(installed.outcome==UserPatchCoordinator::Outcome::Patched&&installed.proofSites==resolved.count&&VCN::vp9Ready);
  rx();auto after=writes;
  assert(properties.at("NRedVTDecoderAdmissionRevision")==1);
  UserPatchCoordinator::Participant already;
@@ -296,12 +364,25 @@ int main(){
  VP9::install(map(nullptr),base,VP9::resolvedUUID,&failed);
  assert(failed.outcome==UserPatchCoordinator::Outcome::Pending&&blocks==initial&&!VCN::vp9Ready);
  assert(VP9::state==VP9::State::Failed);rx();
- puts("PASS VP9 install: prewrite retry, full proof, already patched, mixed bytes/UUID rejection, rollback and capability withdrawal");
+ IODelete(VP9::plan,UserVP9DecodeResolver::Plan,1);
+ VP9::plan=nullptr;
+ IOLockFree(VP9::lock);
+ VP9::lock=nullptr;
+ printf("PASS VP9 install Darwin %u: %u proof sites, retry, mixed/UUID rejection, rollback\n",major,resolved.count);
+}
+int main(){
+ namespace Sonoma=UserVP9DecodeSonomaData;
+ namespace Sequoia=UserVP9DecodeSequoiaData;
+ checkVP9Install(23,Sonoma::ResolverImages,Sonoma::ResolverFunctions,Sonoma::SectionTargets,Sonoma::ABISlots);
+ checkVP9Install(24,Sequoia::ResolverImages,Sequoia::ResolverFunctions,Sequoia::SectionTargets,Sequoia::ABISlots);
+ checkVP9Install(25,ResolverImages,ResolverFunctions,SectionTargets,ABISlots);
 }
 '''
     if LEGACY:
-        harness = harness.replace('cache(ResolverImages,ResolverFunctions,true)', 'cache(ResolverImages,ResolverFunctions,false)')
-        harness = harness.replace('UserVideoDecodeData::MaxPatchSize,1)', 'UserVideoDecodeData::MaxPatchSize,0)')
+        harness = harness.replace('cache(ResolverImages,ResolverFunctions,true)',
+            'cache(ResolverImages,ResolverFunctions,true,SectionTargets,std::size(SectionTargets))')
+        harness = harness.replace('UserVideoDecodeData::MaxPatchSize,1)',
+            'UserVideoDecodeData::MaxPatchSize,true,UserVideoDecodeData::SectionTargets,std::size(UserVideoDecodeData::SectionTargets))')
         harness = harness.replace('UserVideoDecodeData::', 'UserSequoiaVideoData::')
         harness = harness.replace('using namespace UserVideoDecodeData;', 'using namespace UserSequoiaVideoData;')
         harness = harness.replace('devicePatches,plan)', f'devicePatches,plan,{23 if SONOMA else 24})')

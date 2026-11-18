@@ -111,7 +111,17 @@ def main():
         return
     system = 'sonoma' if args.sonoma_cache else 'sequoia'
     directory = args.sonoma_cache or args.sequoia_cache
-    profile = json.loads((ROOT / f'tools/fixtures/{system}-compat.json').read_text()) if directory else None
+    if args.sonoma_cache:
+        profile_name = 'sonoma-compat.json'
+    elif directory:
+        cache_uuid = (directory / 'dyld_shared_cache_x86_64h').open('rb').read(104)[88:104].hex()
+        candidates = sorted((ROOT / 'tools/fixtures').glob('sequoia-compat.json'))
+        candidates += sorted((ROOT / 'tools/fixtures').glob('sequoia-video-*.json'))
+        profile_name = next((p.name for p in candidates
+                             if json.loads(p.read_text()).get('uuid') == cache_uuid), None)
+        if profile_name is None:
+            raise ValueError(f'无匹配缓存 UUID {cache_uuid} 的 sequoia-video profile')
+    profile = json.loads((ROOT / 'tools/fixtures' / profile_name).read_text()) if directory else None
     if profile:
         WORK = ROOT / f'build/{system}/video'
     WORK.mkdir(parents=True, exist_ok=True)
@@ -340,6 +350,8 @@ def main():
                    '    for (const auto& entry : DevicePatches) { if (entry.deviceID == deviceID) { return entry.patches; } }\n'
                    '    return nullptr;\n}\n')
         header += resolver.header(locations)
+        if profile:
+            header += resolver.section_header()
         header += f"inline constexpr UInt32 MaxPatchSize = 448;\ninline constexpr UInt32 PageCount = {pages};\n}}\n"
         if profile:
             header = header.replace('#include <UserCacheResolver.hpp>', '#include <UserVideoDecodeData.hpp>')

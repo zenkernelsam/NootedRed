@@ -42,26 +42,32 @@ namespace MetalFixture
         }
     }
 
-    template<size_t Images, size_t Functions>
-    static void setupProfile(unsigned device, unsigned major,
-                             const UserCacheResolver::ImageReference (&images)[Images],
+    template<typename Data, size_t Images, size_t Functions>
+    static void setupProfile(unsigned device, unsigned major, const UserCacheResolver::ImageReference (&images)[Images],
                              const UserCacheResolver::Function (&functions)[Functions])
     {
-        cache(images, functions);
-        const auto constant = destination(functions[0].originalRefs[0], functions, Functions);
-        blocks[constant].resize(16);
+        std::vector<UserCacheSectionData::Target> targets(std::begin(Data::SurfaceTargets),
+                                                          std::end(Data::SurfaceTargets));
+        targets.insert(targets.end(), std::begin(Data::SubmitTargets), std::end(Data::SubmitTargets));
+        cache(images, functions, true, targets.data(), targets.size());
+        const auto constant = imageAddresses[0] + 0x71064;
+        rel(functionAddresses[0], functions[0].originalRefs[0].offset, constant);
         word32(constant, 0x40400000);
-        put(destination(functions[0].originalRefs[2], functions, Functions), UserSurfaceSyncData::NativeDump,
-            sizeof(UserSurfaceSyncData::NativeDump));
-        plan = {};
-        plan.input = {reader, {}};
+        const auto dump = imageAddresses[0] + 0x6e000;
+        rel(functionAddresses[0], functions[0].originalRefs[2].offset, dump);
+        put(dump, UserSurfaceSyncData::NativeDump, sizeof(UserSurfaceSyncData::NativeDump));
+        plan                  = {};
+        plan.input            = {reader, {}};
         plan.input.scanBuffer = plan.scan;
         assert(UserSurfaceSyncResolver::resolveMetal(plan.input, base, device, plan, major));
     }
 
     static void setupOS(unsigned device, unsigned major)
     {
-        if (major == 25) { setup(device, true, true, true); return; }
+        if (major == 25) {
+            setup(device, true, true, true);
+            return;
+        }
         static constexpr UserCacheResolver::Function sonoma[] = {
             UserSonomaSurfaceData::ResolverFunctions[0], UserSonomaSurfaceData::ResolverFunctions[1],
             UserSonomaSurfaceData::ResolverFunctions[2], UserSonomaSurfaceData::ResolverFunctions[3],
@@ -72,8 +78,13 @@ namespace MetalFixture
             UserSequoiaSurfaceData::ResolverFunctions[2], UserSequoiaSurfaceData::ResolverFunctions[3],
             UserSequoiaSurfaceData::ResolverFunctions[4], UserSequoiaSurfaceData::Submit::ResolverFunctions[0],
         };
-        if (major == 23) { setupProfile(device, major, UserSonomaSurfaceData::ResolverImages, sonoma); }
-        else { assert(major == 24); setupProfile(device, major, UserSequoiaSurfaceData::ResolverImages, sequoia); }
+        if (major == 23) {
+            setupProfile<UserPatchProfiles::Sonoma>(device, major, UserSonomaSurfaceData::ResolverImages, sonoma);
+        }
+        else {
+            assert(major == 24);
+            setupProfile<UserPatchProfiles::Sequoia>(device, major, UserSequoiaSurfaceData::ResolverImages, sequoia);
+        }
     }
 
 }    // namespace MetalFixture

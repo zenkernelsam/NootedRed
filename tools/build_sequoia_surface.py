@@ -29,7 +29,16 @@ def main():
     system = 'sonoma' if args.major == 23 else 'sequoia'
     namespace = 'UserSonomaSurfaceData' if args.major == 23 else 'UserSequoiaSurfaceData'
     WORK = ROOT / f'build/{system}/surface'
-    profile = json.loads((ROOT / f'tools/fixtures/{system}-compat.json').read_text())
+    if args.major == 23:
+        profile_name = 'sonoma-compat.json'
+    else:
+        cache_uuid = (args.cache / 'dyld_shared_cache_x86_64h').open('rb').read(104)[88:104].hex()
+        candidates = sorted((ROOT / 'tools/fixtures').glob('sequoia-surface-*.json'))
+        profile_name = next((p.name for p in candidates
+                             if json.loads(p.read_text()).get('uuid') == cache_uuid), None)
+        if profile_name is None:
+            raise ValueError(f'无匹配缓存 UUID {cache_uuid} 的 sequoia-surface profile')
+    profile = json.loads((ROOT / 'tools/fixtures' / profile_name).read_text())
     WORK.mkdir(parents=True, exist_ok=True)
     cache = CacheReader(args.cache, profile['uuid'])
     try:
@@ -37,7 +46,7 @@ def main():
         for name, meta in profile['metal'].items():
             address, code = cache.function(name)
             if len(code) != meta['size'] or hashlib.sha256(code).hexdigest() != meta['sha256']:
-                raise ValueError(f'Sequoia 原生函数未核实：{name}')
+                raise ValueError(f'{system} 原生函数未核实：{name}')
             functions[name] = address, code
         resolver = ResolverData(cache, WORK)
         init, native = functions[INIT]
@@ -114,10 +123,13 @@ def main():
                    '    for (const auto& e : DevicePatches) { if (e.deviceID == deviceID) { return e.patches; } }\n'
                    '    return nullptr;\n}\n')
         header += resolver.header(locations)
+        header += resolver.section_header()
         submit, submit_code = functions[SUBMIT]
         submit_resolver = ResolverData(cache, WORK)
         submit_resolver.add(submit, submit_code, submit_code)
-        header += 'namespace Submit {\n' + submit_resolver.header([]) + '}\n}\n'
+        header += 'namespace Submit {\n' + submit_resolver.header([])
+        header += submit_resolver.section_header()
+        header += '}\n}\n'
         output = ROOT / f'NootedRed/{namespace}.hpp'
         if args.check:
             if output.read_text() != header:

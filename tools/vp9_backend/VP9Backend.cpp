@@ -46,19 +46,6 @@ inline void *operator new(size_t, void *where) noexcept { return where; }
 
 namespace {
 
-//! Progress report for -NRedVP9Trace: shared_region_check_np with a tagged argument, which NootedRed's syscall hook
-//! records (NRedVP9T<code>N/V in ioreg) and answers with EINVAL without running the real call. Harmless without the
-//! kext: the kernel rejects the bogus address.
-enum TraceCode : uint32_t {
-    TraceCreate = 1, TraceCreateResult, TraceDpbSize, TraceContextSize, TraceInitContext, TraceTargetArea,
-    TraceBitstream, TraceMessage, TraceDecodeEntry, TraceDecodeResult, TraceDecoderResult
-};
-__attribute__((noinline, section("__TEXT,__nrhelpers"))) void trace(uint32_t code, uint64_t value)
-{
-    uint64_t arg = (0x5639ULL << 48) | (static_cast<uint64_t>(code) << 40) | (value & 0xFFFFFFFFFFULL);
-    asm volatile("syscall" : "+D"(arg) : "a"(0x2000126) : "rcx", "rdx", "r11", "memory", "cc");
-}
-
 template<typename T>
 T &field(void *base, size_t offset) {
     return *reinterpret_cast<T *>(static_cast<uint8_t *>(base) + offset);
@@ -144,6 +131,7 @@ struct State {
     uint64_t magic;
     uint32_t maxWidth, maxHeight;      // session size: the DPB is sized once from these
     uint32_t width, height;            // last parsed frame, for getDecodeTargetArea
+    uint32_t bytesPerSample;
     Session session;
 };
 
@@ -160,7 +148,8 @@ struct DpbGeometry {
 
 DpbGeometry dpbGeometry(const State &s) {
     const uint32_t pitch = align(s.maxWidth, DpbAlignment), height = align(s.maxHeight, DpbAlignment);
-    return {pitch, height, pitch * height, pitch * height / 2};
+    const uint32_t bytes = pitch * height * s.bytesPerSample;
+    return {pitch, height, bytes, bytes / 2};
 }
 
 uint8_t configFlags(void *processor, size_t offset) {
@@ -182,7 +171,6 @@ extern "C" int vp9ProcessCreateDecodeSession(void *processor, void *build) {
     new (&s->session) Session();
     s->maxWidth = field<uint32_t>(decoder, Dec::Width);
     s->maxHeight = field<uint32_t>(decoder, Dec::Height);
-    trace(TraceCreate, (s->maxWidth << 16) | (s->maxHeight & 0xFFFF));
     // Up to 4096x4096 for now (VCN 2 decodes up to 8192x4352; the DPB below grows with the size). A larger stream is
     // refused here: without a session every frame would fail, and the frames would still reach the client.
     if (s->maxWidth - 1 >= 4096 || s->maxHeight - 1 >= 4096) { return 1; }
@@ -194,13 +182,14 @@ extern "C" int vp9ProcessCreateDecodeSession(void *processor, void *build) {
 extern "C" uint32_t vp9CalculateDPBSize(void *processor) {
     const State *s = state(processor);
     if (!s) { return 0; }
+    if (!s->bytesPerSample) { return 0; }
     const auto g = dpbGeometry(*s);
     return DpbSlots * (g.lumaSize + g.chromaSize);
 }
 
-//! CalculateContextSize: calc_ctx_size_vp9 for VCN 2 and 8 bit.
-extern "C" uint32_t vp9CalculateContextSize(void *) {
-    return contextSize(8);
+extern "C" uint32_t vp9CalculateContextSize(void *processor) {
+    const State *s = state(processor);
+    return contextSize(s && s->bytesPerSample == 2 ? 10 : 8);
 }
 
 //! initHWContext: called by VADecoder when it (re)allocates the context buffer.
@@ -233,7 +222,6 @@ extern "C" int vp9SetBitstreamFields(void *processor, void *params, void *source
     // Direct: the frame must lie inside the source buffer (AppleGVA passes its start, offset 0).
     if (!state(processor) || !frame || size == 0 || size > field<uint32_t>(decoder, Dec::MaxBitstream) || !cpu ||
         (direct && frame < cpu)) {
-        trace(TraceBitstream, 0x100);
         return 1;
     }
     void *session = field<void *>(decoder, Dec::Session);
@@ -246,10 +234,8 @@ extern "C" int vp9SetBitstreamFields(void *processor, void *params, void *source
     field<uint8_t *>(session, Sess::Bitstream) = cpu;
     field<uint32_t>(session, Sess::BitstreamSize) = static_cast<uint32_t>(size);
     if (nrPrepareBitStream(processor, static_cast<uint8_t *>(decoder) + Dec::Decrypt)) {
-        trace(TraceBitstream, 0x200);
         return 1;
     }
-    trace(TraceBitstream, size);
     field<uint32_t>(build, Build::BitstreamOn) = 1;
     field<void *>(build, Build::Bitstream) = texture;
     field<uint32_t>(build, Build::BitstreamOffset) = direct ? offset : 0;
@@ -264,16 +250,13 @@ extern "C" int vp9SetDecodeMessageFields(void *processor, void *params, void *ta
     void *session = field<void *>(decoder, Dec::Session);
     field<uint8_t>(session, Sess::Dirty) = 0;
     if (!s || !target) {
-        trace(TraceMessage, 0x100);
         return 1;
     }
 
-    // Sizes first: VADecoder allocates the DPB and the context after Process, from these and the dirty flag.
-    const uint32_t dpbSize = vp9CalculateDPBSize(processor), ctxSize = vp9CalculateContextSize(processor);
-    if (dpbSize > field<uint32_t>(session, Sess::DpbSize) || ctxSize > field<uint32_t>(session, Sess::ContextSize)) {
-        field<uint8_t>(session, Sess::Dirty) = 1;
-        field<uint32_t>(session, Sess::DpbSize) = dpbSize;
-        field<uint32_t>(session, Sess::ContextSize) = ctxSize;
+    const uint32_t pitchBytes = field<uint32_t>(target, Tex::Pitch), rows = field<uint32_t>(target, Tex::Height);
+    const uint32_t bytesPerSample = field<uint32_t>(target, Tex::BytesPerElement);
+    if (bytesPerSample - 1 > 1 || (s->bytesPerSample && s->bytesPerSample != bytesPerSample)) {
+        return 1;
     }
 
     auto *msg = field<uint8_t *>(session, Sess::Message);
@@ -290,11 +273,21 @@ extern "C" int vp9SetDecodeMessageFields(void *processor, void *params, void *ta
     Header h;
     const Status status = s->session.build(field<const uint8_t *>(session, Sess::Bitstream),
                                            field<uint32_t>(session, Sess::BitstreamSize),
-                                           field<Surface>(params, Pic::Target), refs, false,
-                                           *reinterpret_cast<Message *>(msg + OffsetVp9), *probs, &h);
-    if (status != Status::Ok || h.bitDepth != 8 || h.width > s->maxWidth || h.height > s->maxHeight) {
-        trace(TraceMessage, 0x200 | static_cast<uint32_t>(status));
+                                           field<Surface>(params, Pic::Target), refs, bytesPerSample == 2,
+                                           *reinterpret_cast<Message *>(msg + OffsetVp9), *probs, &h,
+                                           bytesPerSample == 2 ? 10 : 8);
+    if (status != Status::Ok || h.width > s->maxWidth || h.height > s->maxHeight ||
+        rows < h.height || pitchBytes < h.width * bytesPerSample) {
         return 1;
+    }
+    s->bytesPerSample = bytesPerSample;
+    const auto g = dpbGeometry(*s);
+    const uint32_t dpbSize = DpbSlots * (g.lumaSize + g.chromaSize);
+    const uint32_t ctxSize = vp9CalculateContextSize(processor);
+    if (dpbSize > field<uint32_t>(session, Sess::DpbSize) || ctxSize > field<uint32_t>(session, Sess::ContextSize)) {
+        field<uint8_t>(session, Sess::Dirty) = 1;
+        field<uint32_t>(session, Sess::DpbSize) = dpbSize;
+        field<uint32_t>(session, Sess::ContextSize) = ctxSize;
     }
     s->width = h.width, s->height = h.height;
     field<uint32_t>(decoder, Dec::Width) = h.width;
@@ -313,13 +306,6 @@ extern "C" int vp9SetDecodeMessageFields(void *processor, void *params, void *ta
     header->index[2] = {MessageDynamicDpb, OffsetDpb, sizeof(DynamicDpb), 0};
 
     // Generic decode message: the decode target as the driver fills it for HEVC on VCN 2, the DPB as Mesa's Tier 1.
-    const auto g = dpbGeometry(*s);
-    const uint32_t pitchBytes = field<uint32_t>(target, Tex::Pitch), rows = field<uint32_t>(target, Tex::Height);
-    const uint32_t bytesPerElement = field<uint32_t>(target, Tex::BytesPerElement);
-    if (!bytesPerElement || rows < h.height || pitchBytes < h.width) {
-        trace(TraceMessage, 0x300);
-        return 1;
-    }
     auto *decode = reinterpret_cast<DecodeMessage *>(msg + OffsetDecode);
     decode->streamType = CodecVP9;
     decode->decodeFlags = FlagUseDynamicDpb | FlagUsePal;
@@ -332,7 +318,7 @@ extern "C" int vp9SetDecodeMessageFields(void *processor, void *params, void *ta
     decode->dbPitch = g.pitch;
     decode->dbAlignedHeight = g.height;
     decode->dbPitchUv = g.pitch / 2;
-    decode->dtPitch = pitchBytes / bytesPerElement;
+    decode->dtPitch = pitchBytes >> (bytesPerSample - 1);
     decode->dtUvPitch = decode->dtPitch / 2;
     decode->dtLumaTopOffset = 0;
     decode->dtLumaBottomOffset = h.height * pitchBytes - 1;
@@ -367,7 +353,6 @@ extern "C" int vp9SetDecodeMessageFields(void *processor, void *params, void *ta
         field<uint32_t>(build, Build::ItOn) = 1;
         field<void *>(build, Build::It) = field<void *>(session, Sess::ItTexture);
     }
-    trace(TraceMessage, (h.width << 16) | h.height);
     return 0;
 }
 
@@ -401,28 +386,23 @@ void *poolTexture(void *context, const uint8_t *frame, uint64_t size) {
 extern "C" int vp9DecodePicture(void *context, void *command, void *refCon) {
     void *decoder = field<void *>(command, Cmd::Decoder);
     void *params = field<void *>(command, Cmd::Params);
-    trace(TraceDecodeEntry, params ? field<uint32_t>(params, Pic::FrameSize) : 0);
     if (!decoder || !params) {
-        trace(TraceDecodeResult, 0x105);
         return 5;
     }
     void *bitstream =
         poolTexture(context, field<const uint8_t *>(params, Pic::Frame), field<uint64_t>(params, Pic::FrameSize));
     void *surface = field<void *>(params, Pic::Target);
     if (!bitstream || !surface) {
-        trace(TraceDecodeResult, 0x200 | (bitstream ? 0 : 1) | (surface ? 0 : 2));
         return 5;
     }
     void *va = field<void *>(context, Ctx::Va);
     void *output = nullptr;
     if (nrGetIOSurfaceBuffer(va, surface, &output, 0, nullptr, true)) {
-        trace(TraceDecodeResult, 0x301);
         return 1;
     }
     using DecodeFn = int (*)(void *, void *, void *, void *);
     const int decoded =
         (*reinterpret_cast<DecodeFn *>(field<uint8_t *>(decoder, 0) + 0x48))(decoder, params, bitstream, output);
-    trace(TraceDecoderResult, static_cast<uint32_t>(decoded));
     // The AV1 branch ignores this result and completes the frame, whose surface the VCN never wrote. Fail it instead
     // with the branch's own 5 (no refCon then): VideoToolbox reports kVTVideoDecoderMalfunctionErr for it and later
     // frames, so the client recreates the session or falls back to software instead of showing corrupt frames.
@@ -447,7 +427,7 @@ _vp9DecodePictureEntry:
 
 //! Called instead of AvdCapability::getAVDFuncSubId from setupStaticCoreFunctions. Function 6 is the AV1 decoder
 //! (kind 1, type 0x1000000), which VCN 2 cannot run; it is advertised as VP9 (type 0x1000) so that AppleGVA's VP9
-//! capability lookup finds it. Its formats ('bwar' in, NV12 out) are the ones AppleGVA's VP9 decoder asks for.
+//! capability lookup finds it.
 asm(R"(
     .text
     .globl _vp9GetAVDFuncSubId
@@ -459,18 +439,31 @@ _vp9GetAVDFuncSubId:
 1:  jmp _nrGetAVDFuncSubId
 )");
 
-//! Called instead of AvdCapability::getAVDFuncOutputFormatInfo from setupStaticCoreFunctions. Function 6 keeps only
-//! NV12 (the AV1 list also has 10-bit formats): the backend decodes profile 0 only, so AppleGVA must refuse a 10-bit
-//! stream when it creates the context and VideoToolbox falls back to software. The driver's own NV12 case
-//! (_nrOutputFormatNV12, which ends with pop rbp) writes the single format.
+//! 函数 6 为 AppleGVA 提供 NV12 和 x420，分别对应 VP9 的 8 位和 10 位输出。
 asm(R"(
     .text
     .globl _vp9GetAVDFuncOutputFormatInfo
 _vp9GetAVDFuncOutputFormatInfo:
     cmpl $6, %esi
     jne 1f
-    pushq %rbp
-    movq %rsp, %rbp
-    jmp _nrOutputFormatNV12
+    movl $2, (%rdx)
+    movabsq $0x14e563132, %rax
+    movq %rax, (%rcx)
+    movabsq $0x178343230, %rax
+    movq %rax, 8(%rcx)
+    xorl %eax, %eax
+    retq
 1:  jmp _nrGetAVDFuncOutputFormatInfo
+
+    .section __TEXT,__nrhelpers
+    .globl _vp9BufferRequirement
+_vp9BufferRequirement:
+    cmpl $0x78343230, 0x18(%rsi)
+    jne 1f
+    cmpl $0, 0xc(%rsi)
+    je 1f
+    movl $3, %eax
+    movl $0x78343230, %ecx
+    jmp _nrBufferRequirementP010
+1:  jmp _nrBufferRequirementNV12
 )");

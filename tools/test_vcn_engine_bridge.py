@@ -35,6 +35,7 @@ def main():
 #include <string>
 #include <VCNCapabilities.hpp>
 #define SYSLOG(...) ((void)0)
+#define DBGLOG(...) ((void)0)
 using mach_vm_address_t=uintptr_t;
 struct NRed {
     unsigned device=0x1638;
@@ -48,13 +49,15 @@ const PenguinWizardry::KernelVersion& currentKernelVersion(){static std::optiona
 bool requested=true,loadCompleted=true,has5000=true,has6000=true,hooks=true,engineAllocated=false;
 struct OSObjectLike {void release(){}};
 struct OSMetaClass {
-    unsigned size=64;void* object=nullptr;
+    unsigned size=64;void* object=nullptr;const char* name="";
     unsigned getClassSize()const{return size;}
+    const char* getClassName()const{return name;}
     OSObjectLike* alloc(){return static_cast<OSObjectLike*>(object);}
 };
-struct OSMetaClassBase {const OSMetaClass* meta;const OSMetaClass* getMetaClass(){return meta;}};
+struct OSMetaClassBase {const OSMetaClass* meta;const OSMetaClass* getMetaClass()const{return meta;}};
 struct Pair {const OSMetaClass* oldClass;const OSMetaClass* newClass;};
-Pair pairs[4]{};
+Pair pairs[6]{};
+bool logCastMiss=false;
 OSMetaClass engine;OSMetaClass* engineClass=&engine;
 mach_vm_address_t safeCastOriginal=0,sml5000=0,sml6000=0,signalOriginal=0;
 void (*notifyAccess)(void*)=nullptr;

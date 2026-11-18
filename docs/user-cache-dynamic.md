@@ -15,6 +15,12 @@ SrdShared、LegacyBlend、ComputeScratch 和视频补丁都复用这些基础能
 `UserVideoDecodeResolver.hpp` 保留视频计划；公共层不依赖任一生成数据头。
 `tools/cache_resolver_data.py` 共用生成完整函数、指令／数据分界及引用描述的逻辑。
 
+Darwin 23–25 在 `UserPatchProfiles.hpp` 选择参考数据。Metal 共用 `resolveCore` 核验设备初始化和覆盖入口，
+并通过 `resolvePart` 解析 Scratch 和构造器。VCN、VideoToolbox 解码候选和 SubmitGuard 也通过同一入口选择数据。
+OpenGL 共用页面解析与安装器，VP9 按版本选择函数和 ABI 数据后共用解析器。
+`VCNKernelProfiles.hpp` 提供内核 ABI 守卫与调用点数据，由 `VCN.cpp` 核验并安装。
+`test_patch_profiles.py` 覆盖三版 Metal 的 FVRC 功能组、热重放、失败回退及目标拒绝。
+
 OpenGL 的独立驱动修复见 [OpenGL 修复](opengl-display-fix.md)。它复用公共相对位移工具及引用数据，
 只匹配当前校验页内的完整修复块，不执行文件准备或 Mach-O 扫描；跨页块和页内歧义均拒绝。
 
@@ -27,8 +33,10 @@ Tahoe 的 COW 映射判定、`HintOnly` 不得禁用可复用条目，以及跳�
 解析器仅读取并生成计划；桥接完成所有字节与 RX 权限检查后才写入私有 COW 页。
 
 动态路径重新计算 rel32 调用与 RIP 位移。已完整核验的目标函数允许搬迁；
-其他外部目标仍要求处于原映像内的参考 RVA。dyld 合并 GOT / 调用桩按当前绑定指针
-核对目标映像与 RVA，保留同一绑定的不同引用位置，不能把所有引用改到第一个 GOT 槽。
+三版的显示、提交守卫和视频共用 `sectionTarget`，按 Mach-O 段名、节名及节内偏移重新定位数据目标。
+命令位置和节序号只作提示。Sonoma 与 Sequoia 的节表分别来自 14.8.9（23J631）和 15.8.3（24H241）真缓存。
+未列入节表且无法关联到已核验函数的外部目标仍使用映像内参考 RVA。
+dyld 合并 GOT / 调用桩按当前绑定指针核对目标，保留同一绑定的不同引用位置，不能把所有引用改到第一个 GOT 槽。
 这支持相同实现的缓存重排，不能自动适配任意新函数实现、外部符号 RVA 或驱动 ABI。
 
 Tahoe ComputeScratch 核验原生配置函数、完整 pipeline 构造函数和 452 字节 Scratch 函数，
@@ -59,3 +67,10 @@ SubmitGuard 独立匹配完整提交方法，核对相对引用；重复安装�
 默认分别运行未知 UUID 和参考 UUID，在保留参考 UUID 时仍重排映像、函数与引用目标。
 `--known-uuid` 仅运行参考 UUID 用例，两项均接受 `--sequoia` 或 `--sonoma`。
 两类 UUID 执行相同的写入、幂等、拒绝和回滚断言。
+
+`test_sequoia_section_compat.py` 对比冻结的 15.8.1 完整函数、全部引用及六种设备载荷，
+并在模拟节布局中用当前生产解析器执行旧函数的解析、幂等和拒绝测试。
+旧版节起点按引用的一致位移构造；缺少 15.8.1 原始 Mach-O 节头，不能将该结果视为真实缓存或上机验证。
+`test_cache_section_live.py --major 24 --display-only --cache <目录>` 只读验证真实缓存的六种显示计划与提交守卫。
+省略 `--display-only` 同时验证四种 VCN2 核显的视频计划；`test_fvrc_video.py --sequoia` 覆盖固定 RVA 拒绝的复现、
+节目标及绑定拒绝、跨 ASLR 复用和脏映射回退。真实缓存解析成功仍需上机验证解码、编码及持续播放。
