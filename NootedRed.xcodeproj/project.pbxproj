@@ -116,6 +116,8 @@
 		CE8DA0832517C41A008C44E8 /* libkmod.a in Frameworks */ = {isa = PBXBuildFile; fileRef = CE8DA0822517C41A008C44E8 /* libkmod.a */; };
 		CEA03B5E20EE825A00BA842F /* NRed.cpp in Sources */ = {isa = PBXBuildFile; fileRef = CEA03B5C20EE825A00BA842F /* NRed.cpp */; };
 		CEA03B5F20EE825A00BA842F /* NRed.hpp in Headers */ = {isa = PBXBuildFile; fileRef = CEA03B5D20EE825A00BA842F /* NRed.hpp */; };
+		CEA100A0000000000000000A01 /* NRedAudio.cpp in Sources */ = {isa = PBXBuildFile; fileRef = CEA100A0000000000000000A03 /* NRedAudio.cpp */; };
+		CEA100A0000000000000000A02 /* NRedAudio.hpp in Headers */ = {isa = PBXBuildFile; fileRef = CEA100A0000000000000000A04 /* NRedAudio.hpp */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -301,6 +303,8 @@
 		CE8DA0822517C41A008C44E8 /* libkmod.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libkmod.a; path = MacKernelSDK/Library/x86_64/libkmod.a; sourceTree = SOURCE_ROOT; };
 		CEA03B5C20EE825A00BA842F /* NRed.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = NRed.cpp; sourceTree = "<group>"; };
 		CEA03B5D20EE825A00BA842F /* NRed.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = NRed.hpp; sourceTree = "<group>"; };
+		CEA100A0000000000000000A03 /* NRedAudio.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = NRedAudio.cpp; sourceTree = "<group>"; };
+		CEA100A0000000000000000A04 /* NRedAudio.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = NRedAudio.hpp; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -391,6 +395,8 @@
 				4068B3B92E97D805007B46BB /* Kexts.cpp */,
 				CEA03B5D20EE825A00BA842F /* NRed.hpp */,
 				CEA03B5C20EE825A00BA842F /* NRed.cpp */,
+				CEA100A0000000000000000A04 /* NRedAudio.hpp */,
+				CEA100A0000000000000000A03 /* NRedAudio.cpp */,
 				1C748C2C1C21952C0024EED2 /* Plugin.cpp */,
 				40FC5FD829BF995E00367F9D /* X5000.hpp */,
 				40FC5FD729BF995E00367F9D /* X5000.cpp */,
@@ -656,6 +662,7 @@
 				4014D9722C74AA7000FDE986 /* ObjectField.hpp in Headers */,
 				4091276D2CE2F681004DBDB5 /* SignalTypes.hpp in Headers */,
 				CEA03B5F20EE825A00BA842F /* NRed.hpp in Headers */,
+				CEA100A0000000000000000A02 /* NRedAudio.hpp in Headers */,
 				409127662CE2F2F4004DBDB5 /* PowerPlay.hpp in Headers */,
 				408B3DE52CDFA77800CAE5D2 /* SMUIO.hpp in Headers */,
 				408B3DE92CDFA81200CAE5D2 /* RenoirPPSMC.hpp in Headers */,
@@ -833,6 +840,7 @@
 				40FC5FD929BF995E00367F9D /* X5000.cpp in Sources */,
 				40AF79773030BCC00005EFAB /* AmdAtomPspDirectoryDummy.cpp in Sources */,
 				CEA03B5E20EE825A00BA842F /* NRed.cpp in Sources */,
+				CEA100A0000000000000000A01 /* NRedAudio.cpp in Sources */,
 				1C748C2D1C21952C0024EED2 /* Plugin.cpp in Sources */,
 				CE405ED91E4A080700AA0B3D /* plugin_start.cpp in Sources */,
 			);
